@@ -21,7 +21,7 @@
 #include "../firstech/firstech_code_gen.h"
 #include "compile.h"
 #include <string.h>
-#include <windows.h>
+// #include <windows.h>
 LinkedList_t wave_file_list=0;
 static String_t Compile_one (String_t file);
 
