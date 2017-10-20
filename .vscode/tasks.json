@@ -6,9 +6,9 @@
         {
             "taskName": "Build",
             "type": "shell",
-            "command": "cd build && cmake --build .",
+            "command": "cmake --build ./build",
             "problemMatcher": [
-               "$msCompile" 
+               "$gcc" 
             ],
             "group": {
                 "kind": "build",
