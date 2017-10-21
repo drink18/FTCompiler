@@ -1,0 +1,126 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    rx_phase_calibration.src                                            
+Author           :    firtech                                            
+Contacts         :                                                
+Date             :    2017.3.6                                            
+File version     :                                                
+Key words        :                                                
+File discription :                                                
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+        
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1.0;                         
+double noScans  = 74.0;  
+double noAverages = 1.0;                     
+double noSliceBlock = 1.0;
+double no_View_Block = 256.0;                 
+double samplePeriod=20.0;                        
+double noSamples =4096.0;                                               
+double TR = 1000.0;//ms        
+double TE = 50000.0;//us                                                                                  
+double tsel90 =3000.0;//2560.0; //us               
+double rf90Scale=60.0;                     
+double rxGain = 63.0;//db                  
+double ttxgatepost = 10.0;                
+double ttxgatepre = 10.0;                     
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//0??       
+double trxgatepre = 10.0;                 
+double trxgatepost = 10.0;                    
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//0??    
+double ext_gain = 3;                          
+                             
+double preDiscard = 20.0;
+int    rf_Shape_NO =4;//0; 
+double rf_tx_delay = 100; // us rf pulse tranmit delay time 
+
+void main()
+{
+   setr(0x2c ,ext_gain);
+	  MainctrlTrigger( noAverages, noScans, TR);
+
+		gradS:
+    {
+    	double temp=1.0;
+      TimerCmp(temp ,US);
+      averages_loop: 
+      goto averages_loop;
+    }
+		gradR:
+    {
+    double temp=1.0;
+      TimerCmp(temp ,US);
+      averages_loop: 
+      goto averages_loop;
+    }      	 
+		gradP:
+    {
+     double temp=1.0;
+      TimerCmp(temp ,US);
+      averages_loop: 
+      goto averages_loop;
+    } 
+    
+	 tx1:
+	 {
+		 double delayTime_rf90; 
+     TxChannelShapeSel(CHANNEL1,rf_Shape_NO);        
+		 tx_start:
+		 TxFirReset(); 
+		 TxFreqOffsetReg(CHANNEL1,tx_freq_offset_data,KHZ);
+		 TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);  
+		 TxAttReg(CHANNEL1,rf90Scale);//ch,att db 
+
+		 WaitTrigger();
+       delayTime_rf90 = rf_tx_delay;
+		   TimerCmp(delayTime_rf90,US);
+		   TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       goto tx_start;
+	 }
+  
+	 rx1:
+	 {
+		 double fix_delaytime;
+		 double sample_period;
+		 double delayTime_c1; 
+     double sample_total;
+     
+		 rx_start:
+		
+		 RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+		 RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);
+       RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);
+       RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data);
+       RxFreqOffsetReg(CHANNEL3,rx_freq_offset_data,KHZ);
+       RxPhaseOffsetReg(CHANNEL3,rx_ph_offset_data);
+       RxFreqOffsetReg(CHANNEL4,rx_freq_offset_data,KHZ);
+       RxPhaseOffsetReg(CHANNEL4,rx_ph_offset_data);
+       sample_total =preDiscard +  noSamples;
+		 sample_period=RxChannelAcquirePara(samplePeriod,sample_total);
+		 RxGainReg(CHANNEL1,rxGain);  //ch, db att  
+       RxGainReg(CHANNEL2,rxGain);  //ch, db att  
+       RxGainReg(CHANNEL3,rxGain);  //ch, db att  
+       RxGainReg(CHANNEL4,rxGain);  //ch, db att  
+		 fix_delaytime = TX_FILTER_DELAY+rf_tx_delay;       //计算回波采集开始时间中间量
+		 WaitTrigger();                                                //等待trigger信号 
+       delayTime_c1 = fix_delaytime;                         //计算回波开始采集时间
+			 TimerCmp(delayTime_c1,US);                                  //采集等待计时
+			 RxStart(15,trxgatepre,trxgatepost,sample_period);     //计时delayTime_c1后开始采集，并打开门控       
+		   rxGain = rxGain - 1;
+		 goto rx_start;
+	 }
+  
+}

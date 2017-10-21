@@ -1,0 +1,457 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    sedf.src                                            
+Author           :    pengjing                                            
+Contacts         :                                                
+Date             :    2016.12.29                                            
+File version     :                                                
+Key words        :                                                
+File discription :    SE Diffusion Weighted sequence                                             
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+2016.12.29   pengjing           v1.0         
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1.0;                         
+double noScans  = 256.0;  
+double noAverages = 1.0;                     
+double noSliceBlock = 1.0;                       
+double noSamples =256.0; 
+double samplePeriod=30.0; 
+double effectiveEcho = 1.0; 
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double TR = 500.0;//ms        
+double TE = 250000.0;//us
+double distanceSlice1 = 0.0;
+double thickSlice = 5.0;
+double seperationSlice = 10.0;
+double orderSlice = 1.0;
+double ratioPhaseSampling = 1.0;
+double ratioFreqSampling = 1.0;
+double partialFreqSampling = 0.0;
+double partialPhaseSampling = 0.0;
+double modeAverage = 0.0;
+double phaseCycle = 0.0;
+double fovPhaseOffset = 0.0;
+double fovReadOffset = 0.0;
+double dummyShot = 0.0;
+double modePhaseCode = 1.0;
+double orderPhaseCode = 1.0;
+double modePartialPhaseSampling = 0.0;
+double flow_comp_on = 0.0;
+
+int rf_Shape_NO =4;//0;                       
+double tsel90 =3000;//2560.0; //us 
+double tsel180 =3000;//2560.0; //us  
+double rf90Bandwidth = 2000;//960.0;               
+double rf90Scale=13.9;//12.5;      
+double rf180Scale=7.9;//6.5;  
+double gradWavePoint = 500.0;             
+double gradSamplePeriod = 1.0;//us                
+double rxGain = 0.0;//db                  
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//0??                      
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//0?? 
+double sliceRephase = 1.0; //0 ->trephase_pre180 1 ->trephase_post180
+double preDiscard = 2.0;
+double tDiff = 20000;//600.0;//us
+double gradDiff = 500.0;//
+double thickSliceRatioGain = 1.32;
+double gradMatrixSel = 0;
+double sepeceSliceTime = 40000.0; // TR/noSliceBlock > sepeceSliceTime >TE * noEchos 
+
+
+double gainEffPhase = 300.0;
+double ratiaFreqOversampling = 1.0;
+double gradCompensation = 0.0; //the Trapezoid gain after sample
+double tcrush = 1000.0;
+double tref = 1500.0;
+double UnifiedTDelay = 50.0;//Unified time delay(US)
+
+double dummyn1 =0.0; 
+double dummyn2 =0.0; 
+double dummyn3 =0.0; 
+double dummyn4 =0.0; 
+double dummyn5 =0.0; 
+double dummyn6 =0.0; 
+double dummyn7 =0.0; 
+double dummyn8 =0.0; 
+double dummyn9 =0.0; 
+double dummyn10=0.0; 
+double dummyn11=0.0; 
+double dummyn12=0.0; 
+double dummyn13=0.0; 
+double dummyn14=0.0; 
+double dummyn15=0.0; 
+double dummyn16=0.0; 
+double dummyn17=0.0; 
+double dummyn18=0.0; 
+double dummyn19=0.0; 
+double dummyn20=0.0; 
+             
+void main()
+{
+    MainctrlTrigger( noAverages, noScans, TR);
+
+    gradS:
+    {
+
+        double trampTime;
+        double fixDelayTime;
+        double t_comp;
+        double t_refocus;
+        double t_180;
+	    double t_flow;
+        double t_flow_temp;
+	    double t_flow_1;
+	    double t_flow_2;
+        double delayTime1;
+        double delayTime2;
+		double delayTime3;
+        double delayTime4;
+	    double gs_var;
+        double gs_comp; 
+        double rep_cnt;
+		double preTacq;
+        double noPreEffSample ;
+        int waveSel1_1;
+        int waveSel1_2;
+       
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5 ;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);	   
+        averages_loop: 
+        GradMatSel(gradMatrixSel);
+	    gs_var = GardSliceGain(rf90Bandwidth,thickSlice,thickSliceRatioGain);
+    	t_comp = tref;
+		gs_comp = 0.5*gs_var*(tsel90+trampTime)/(t_comp+trampTime);
+	    if(flow_comp_on==1.0)
+	    {
+		    t_comp = 2*tref + trampTime;
+		    t_flow = tsel90/2-trampTime/2;
+			gs_comp = gs_var*(tsel90+trampTime)/(t_comp+trampTime);
+	    }	
+        
+		t_refocus = 0.5*(tsel90+trampTime);
+        t_flow_temp = tsel90 + trampTime + tcrush;
+	    t_flow_1 = 2*t_flow_temp - (tsel180*0.5 + tcrush + tsel90*0.5 + trampTime);
+	    t_flow_2 = t_flow_temp - trampTime;		
+		
+		if(sliceRephase == 0.0){
+		t_flow_1 = (tsel180/2) + tcrush + (trampTime/2);
+		t_flow_2 = (tsel180/2) + tcrush - (trampTime/2);
+		}
+		
+        t_180 = tsel180+2.0*tcrush+sliceRephase*t_refocus+flow_comp_on*t_flow_1;         
+	  
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;
+       
+        rep_cnt = 0.0;      
+        WaitTrigger(); 
+
+        slice_loop:
+
+        delayTime1 = fixDelayTime + sepeceSliceTime*rep_cnt; 
+        delayTime2 = fixDelayTime + TE*0.5 + tsel90*0.5 - tsel180*0.5  -tcrush +sepeceSliceTime*rep_cnt; 
+        delayTime3 = fixDelayTime + tsel90 + tref + 4*trampTime +50.0+ sepeceSliceTime*rep_cnt; 
+		delayTime4 = fixDelayTime + tsel90*0.5 + TE - preTacq - tDiff - 2*trampTime - 50.0+ sepeceSliceTime*rep_cnt;
+ 	    if(flow_comp_on==0.0)
+	    {
+	        if(sliceRephase==0.0)
+			{
+	   	    TimerCmp(delayTime1,US); 
+            TrapezoidTwoFixTrampTimeStart( waveSel1_1,waveSel1_2,waveSel1_2,waveSel1_1,\
+                                          tsel90, 0.0, t_comp, trampTime,gs_var, gs_comp);			
+			}else{
+	   	    TimerCmp(delayTime1,US); 
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tsel90, trampTime,gs_var);				
+			}
+
+			TimerCmp(delayTime3,US); 
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tDiff, trampTime,gradDiff);	
+			
+	        TimerCmp(delayTime2 ,US);
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,t_180,trampTime,gs_var); 
+			
+			TimerCmp(delayTime4,US); 
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tDiff, trampTime,gradDiff);			
+	    }else
+	    {
+	   	    if(sliceRephase==0.0)
+			{
+	   	    TimerCmp(delayTime1,US); 
+            TrapezoidThreeFixTrampTimeStart( waveSel1_1,waveSel1_2,waveSel1_2,waveSel1_1, waveSel1_1,waveSel1_2,\
+                                             tsel90, 0.0, t_comp, 0.0, t_flow,trampTime,gs_var,gs_comp,gs_var);		
+			}else{
+	   	    TimerCmp(delayTime1,US); 
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tsel90, trampTime,gs_var);				
+			}
+			TimerCmp(delayTime3,US); 
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tDiff, trampTime,gradDiff);
+			
+	   	    TimerCmp(delayTime2 ,US);
+            TrapezoidTwoFixTrampTimeStart( waveSel1_1,waveSel1_2,waveSel1_2,waveSel1_1,\
+                                           t_180, 0.0, t_flow_2, trampTime,gs_var, gs_var);
+			TimerCmp(delayTime4,US); 
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tDiff, trampTime,gradDiff);	
+	    }
+ 
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop; 
+          
+        goto averages_loop;
+    }
+       
+    gradR:
+    {
+       
+        double trampTime;
+        double fixDelayTime;
+        double t_comp;
+        double delayTime1;
+        double delayTime2; 
+		double delayTime3;
+		double delayTime4;		
+        double gr_var;
+        double gr_comp;	
+        double preTacq;
+        double tacq;
+        double totalsample;
+        double noPreEffSample ;
+		double rep_cnt;
+        int waveSel1_1;
+        int waveSel1_2;
+		
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+		
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5 ;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        totalsample = preDiscard +  noSamples;
+        tacq = AcquireDuration(samplePeriod,totalsample);
+      
+        gr_var = GardReadGain( samplePeriod, fovRead, ratiaFreqOversampling);
+		t_comp = tsel90*0.5;
+		if(flow_comp_on==0.0)
+		    gr_comp = gr_var*(preTacq+trampTime*0.5)/(tref+trampTime);
+		else
+		    gr_comp = gr_var*(tref + preTacq + trampTime*1.5)/(t_comp+trampTime);
+		
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;
+      
+        averages_loop:
+        
+        rep_cnt = 0.0;       
+        WaitTrigger();       
+        slice_loop:  
+        delayTime1 = fixDelayTime + tsel90 + 2*trampTime+sepeceSliceTime*rep_cnt;  
+        delayTime2 = fixDelayTime + tsel90*0.5 + TE - preTacq + sepeceSliceTime*rep_cnt;
+        delayTime3 = fixDelayTime + tsel90 + tref + 4*trampTime +50.0+ sepeceSliceTime*rep_cnt; 
+		delayTime4 = fixDelayTime + tsel90*0.5 + TE - preTacq - tDiff - 2*trampTime - 50.0 + sepeceSliceTime*rep_cnt;
+		  
+ 	    if(flow_comp_on==0.0)
+	    {
+	        TimerCmp(delayTime1 ,US);
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tref,trampTime,gr_comp); 
+	    }else
+	    {
+	   	    TimerCmp(delayTime1 ,US);
+            TrapezoidTwoFixTrampTimeStart( waveSel1_2,waveSel1_1,waveSel1_1,waveSel1_2,\
+                                           tref, 0.0, t_comp, trampTime,gr_var, gr_comp);
+	    }
+        TimerCmp(delayTime3,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tDiff, trampTime,gradDiff);
+		TimerCmp(delayTime4,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tDiff, trampTime,gradDiff);			
+		TimerCmp(delayTime2 ,US);
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tacq,trampTime,gr_var);          		
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop; 
+          
+        goto averages_loop; 
+    }
+
+
+    gradP:
+    {
+       
+        double trampTime;
+        double fixDelayTime;
+        double holdTime1;
+        double delayTime1;
+		double delayTime3;
+		double delayTime4;
+        double rep_cnt;
+        double gp_var;
+		double gp_var_rescale;
+        double dummyShotEnout;
+        double echoBlockCnt = 0.0;
+		double preTacq;
+        double noPreEffSample ;
+        int waveSel1_1;
+        int waveSel1_2;
+		
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5 ;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        holdTime1 = GardPhaseTime( fovPhase, gainEffPhase, noScans , noEchoes,  dummyShot, trampTime);
+		gp_var_rescale = gainEffPhase*(holdTime1+trampTime)/(tref+trampTime);
+
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;  
+        averages_loop:
+        rep_cnt = 0.0;       
+        WaitTrigger(); 
+    
+        dummyShotEnout = DummyShotEn(dummyShot, noAverages,dummyn1, dummyn2, dummyn3, dummyn4,\
+                                   dummyn5, dummyn6, dummyn7, dummyn8, dummyn9, dummyn10,\
+                                   dummyn11, dummyn12, dummyn13, dummyn14, dummyn15,\
+                                   dummyn16, dummyn17, dummyn18, dummyn19, dummyn20);
+        if(dummyShotEnout==0.0)
+             echoBlockCnt = GradEnScanCnt( noAverages);
+               
+        slice_loop:
+        delayTime1 = fixDelayTime + tsel90 + trampTime*2 +sepeceSliceTime*rep_cnt;
+        delayTime3 = fixDelayTime + tsel90 + tref + 4*trampTime +50.0+ sepeceSliceTime*rep_cnt; 
+		delayTime4 = fixDelayTime + tsel90*0.5 + TE - preTacq - tDiff - 2*trampTime - 50.0+ sepeceSliceTime*rep_cnt;
+		
+        if(dummyShotEnout==0.0)
+        gp_var = ModePhaseCodeGain( modePhaseCode, effectiveEcho, noScans, noEchoes,\
+		                               dummyShot,orderPhaseCode, modePartialPhaseSampling,\
+					                   partialPhaseSampling,echoBlockCnt, 1.0, gp_var_rescale);
+        else
+             gp_var = 0.0;
+         
+        TimerCmp(delayTime1,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tref,trampTime,gp_var);
+		TimerCmp(delayTime3,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tDiff, trampTime,gradDiff);			
+ 		TimerCmp(delayTime4,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tDiff, trampTime,gradDiff);	
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop; 
+          
+        goto averages_loop; 
+    }  
+ 
+    tx1:
+    {
+        double trampTime;
+        double fixDelayTime;
+        double delayTime_rf90_1; 
+        double delayTime_rf180_c1; 
+        double rep_cnt = 0.0;
+        double ttxgatepost = 10.0;                
+        double ttxgatepre = 10.0; 
+        double noSlice=0.0;     
+
+        TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = trampTime +UnifiedTDelay;
+        tx_start:
+        TxFirReset(); 
+        WaitTrigger();
+
+        TxAvePhase( modeAverage,noAverages,tx_freq_offset_data, tx_ph_offset_data,KHZ, CHANNEL1);
+       
+        rep_cnt = 0.0;
+       
+        slice_loop:     
+        noSlice = TxSliceCount( orderSlice,  noSliceBlock, rep_cnt);
+      
+        TxFreqSet( orderSlice, distanceSlice1, seperationSlice,thickSlice,\
+                     noSlice, rf90Bandwidth, CHANNEL1,thickSliceRatioGain);
+ 
+        delayTime_rf90_1 = fixDelayTime+sepeceSliceTime*rep_cnt;
+        delayTime_rf180_c1 = delayTime_rf90_1+TE*0.5;
+        TxPhaseCycle(CHANNEL1, phaseCycle, noAverages,rep_cnt);
+        TxAttReg(CHANNEL1,rf90Scale);//ch,att db 
+        TimerCmp(delayTime_rf90_1,US);
+        TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+        TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);
+        TxAttReg(CHANNEL1,rf180Scale);//ch,att db       
+        TimerCmp(delayTime_rf180_c1,US);
+        TxStart(CHANNEL1,tsel180,ttxgatepre,ttxgatepost);
+        
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop;
+    
+        goto tx_start;
+    }
+
+    rx1:
+    {
+        double trampTime;
+        double fixDelayTime;
+        double sample_period;
+        double delayTime_1; 
+        double delayTime_c1; 
+        double rep_cnt = 0.0;
+        double sample_total;
+        double preTacq;
+        double noPreEffSample;
+        double trxgatepre = 10.0;                 
+        double trxgatepost = 10.0; 
+
+        rx_start:
+      
+        RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);       
+        RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data);     
+        RxFreqOffsetReg(CHANNEL3,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL3,rx_ph_offset_data);     
+        RxFreqOffsetReg(CHANNEL4,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL4,rx_ph_offset_data);  
+        sample_total =preDiscard +  noSamples;
+        sample_period=RxChannelAcquirePara(samplePeriod,sample_total);
+        RxGainReg(CHANNEL1,rxGain);  //ch, db att  
+        RxGainReg(CHANNEL2,rxGain);  //ch, db att  
+        RxGainReg(CHANNEL3,rxGain);  //ch, db att  
+        RxGainReg(CHANNEL4,rxGain);  //ch, db att  
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = TX_FILTER_DELAY-trxgatepre+trampTime+UnifiedTDelay;
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        WaitTrigger();
+
+        rep_cnt = 0.0; 
+        slice_loop:
+        delayTime_c1 = fixDelayTime+TE-preTacq+tsel90*0.5 +sepeceSliceTime*rep_cnt; 
+        TimerCmp(delayTime_c1,US);
+        RxStart(15,trxgatepre,trxgatepost,sample_period);
+                 
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop;
+         
+        goto rx_start;
+    }
+
+}
+      
+
+
+
+
+
+

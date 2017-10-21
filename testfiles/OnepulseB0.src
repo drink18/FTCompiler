@@ -1,0 +1,176 @@
+/*-------------------------------------------------------------------------------------------------
+  ipulse
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"
+#include "grad.h"
+#include "tx.h"
+#include "rx.h"
+#include "mainctrl.h"
+
+/* 必备 */
+double noEchoes = 1.0;
+double noScans  = 25600;
+double noAverages = 1.0;
+double noSliceBlock = 1.0;
+double noSamples = 4096.0;
+double samplePeriod = 10.0;//20.0;
+double effectiveEcho = 1.0;
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double TR = 500.0;//ms
+double TE = 20000.0;//us
+double distanceSlice1 = 0.0;
+double thickSlice = 5.0;
+double seperationSlice = 10.0;
+double orderSlice = 1.0;
+double ratioPhaseSampling = 1.0;
+double ratioFreqSampling = 1.0;
+double partialFreqSampling = 0.0;
+double partialPhaseSampling = 0.0;
+double modeAverage = 0.0;
+double phaseCycle = 0.0;
+double fovPhaseOffset = 0.0;
+double fovReadOffset = 0.0;
+double dummyShot = 0.0;
+double modePhaseCode = 1.0;
+double orderPhaseCode = 0.0;
+double modePartialPhaseSampling = 0.0;
+double noSwitches = 4.0;
+double BLIPPEDen = 1.0;
+
+/* 测试添加 */
+int rf_Shape_NO =1;
+double tsel90 = 1000.0; //us
+double rf90Scale=9.8;
+double gradWavePoint = 500.0;
+double gradSamplePeriod = 1.0;//us
+double rxGain = 0.0;//db
+double tx_freq_offset_data = 0.0;//KHZ
+double tx_ph_offset_data = 0.0;//0??
+double rx_freq_offset_data = 0.0;//KHZ
+double rx_ph_offset_data = 0.0;//0??
+double preDiscard = 30;//56.0;
+double gradMax = 0.84;
+double thickSliceRatioGain = 1.32;
+
+
+
+double GMAX = 0.0;
+double rf_tx_delay = 100; 
+
+void main()
+{
+    MainctrlTrigger( noAverages, noScans, TR);
+
+    gradS:
+   {
+      double temp = 3.0;
+      GradMatSel(0);
+      grads_averages_loop:
+      WaitTrigger();
+      Delay(temp, US);
+      TrapezoidOneFixTrampTimeStart(0,1,2000.0,500.0,GMAX);
+
+      goto grads_averages_loop;
+   }
+
+   gradR:
+   {
+      double temp = 3.0;
+      gradr_averages_loop:
+      WaitTrigger();
+      Delay(temp, US);
+      TrapezoidOneFixTrampTimeStart(0,1,2000.0,500.0,GMAX);
+
+      goto gradr_averages_loop;
+   }
+
+   gradP:
+   {
+      double temp = 3.0;
+      gradp_averages_loop:
+      WaitTrigger();
+      Delay(temp, US);
+      TrapezoidOneFixTrampTimeStart(0,1,2000.0,500.0, GMAX);
+
+      goto gradp_averages_loop;
+   }
+
+
+   tx1:
+   {
+      //定义变量
+      double fix_delaytime;
+      double delayTime_rf90;
+      double ttxgatepost = 10.0;
+      double ttxgatepre = 10.0;
+      static double tx_ave_cnt = 0.0;
+
+      TxHardPulseShape(CHANNEL1, tsel90);  //硬脉冲。
+
+      tx_start:
+      TxFirReset();  //滤波器复位。
+
+      TxFreqOffsetReg(CHANNEL1, tx_freq_offset_data, KHZ); 
+      TxPhaseOffsetReg(CHANNEL1, tx_ph_offset_data); 
+
+      TxAttReg(CHANNEL1, rf90Scale);//ch,att db  发端增益。
+      fix_delaytime = 0;//固定延时
+
+      WaitTrigger();   //等待触发信号。
+
+      delayTime_rf90 = fix_delaytime;
+  //    tx_averages_loop:
+      TimerCmp(delayTime_rf90,US);   //以trigger为基准，等待的时长。
+      TxStart(CHANNEL1, tsel90, ttxgatepre, ttxgatepost); //发射波形。
+      
+  //    tx_ave_cnt = tx_ave_cnt + 1.0;
+      
+   //   if(tx_ave_cnt < noAverages )
+   //      goto tx_averages_loop;
+
+      goto tx_start;
+   }
+
+   rx1:
+   {
+      //定义变量
+      double fix_delaytime;
+      double sample_period;
+      double delayTime_c1;
+      double sample_total;
+      double tacq;
+      double rx_ave_cnt = 0;
+      double trxgatepre = 10.0;
+      double trxgatepost = 10.0;
+
+      sample_total = preDiscard + noSamples;  //总采样点
+      sample_period = RxChannelAcquirePara(samplePeriod, sample_total); //采样带宽(间隔)、采样点数（含丢弃点），计算接收波形所需要的时间，单位us。
+
+      rx_start://配置变量，计算。
+      RxFirReset();  //滤波器复位。
+      RxFreqOffsetReg(CHANNEL1, rx_freq_offset_data, KHZ); //设置频率偏移值。
+      RxPhaseOffsetReg(CHANNEL1, rx_ph_offset_data); //设置相位偏移值。
+      
+      tacq = AcquireDuration(samplePeriod, noSamples);//接收信号有效采样时长（不含丢弃点）。
+      
+      RxGainReg(CHANNEL1,rxGain);  //dB，收端增益。
+      
+      fix_delaytime = TX_FILTER_DELAY - trxgatepre + tsel90;  //
+      
+      WaitTrigger();   //等待触发信号。
+      delayTime_c1 = fix_delaytime + rf_tx_delay;//+ tsel90*0.5 + TE - tacq*0.5;
+      
+     // rx_averages_loop:
+      TimerCmp(delayTime_c1,US);
+      RxStart(1, trxgatepre, trxgatepost, sample_period);
+      
+      rx_ave_cnt = rx_ave_cnt + 1.0;
+      
+  //    if(rx_ave_cnt < noAverages )
+  //       goto rx_averages_loop;
+      
+      goto rx_start;
+   }
+}

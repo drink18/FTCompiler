@@ -1,0 +1,1043 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    SECRUSH.src                                            
+Author           :    pengjing                                            
+Contacts         :                                                
+Date             :    2016.12.29                                            
+File version     :                                                
+Key words        :                                                
+File discription :                                                
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+2016.12.29   pengjing           v1.0      
+========================================================
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1;                         
+double noScans_2  = 1;//12;//192; //1-32767  
+double noScans  = 256; //0-32767
+double noAverages = 1;                     
+double noSliceBlock = 1; //1-128
+double batch_slices = 1;//0-128 
+double slice_block = 1; //1-256
+double view_block = 1;//1-256    
+double no_disacq=0;//0-32767                
+double noSamples =256; 
+double samplePeriod=10; 
+double effectiveEcho = 1; 
+double fovPhase = 250;
+double fovRead  = 250;
+double TR = 500 ;//ms        
+double TE = 11520;//11180;//us
+double te2_extend_1 = 0;
+double te2_extend_2 = 1;
+double te2_extend_3 = 2;
+//gain
+double Gs90 = 146;//200;
+double Gsr =  49.04705;//1.9882;//6.6;//146;
+double Gs180 = 146;//;
+double Gsc = 200;//200;
+double Gr = 400;//200;
+double Grc = 500;//200;
+//double Grr = 100;
+//double Gp = 200;
+double Gps = 200;
+double GspoilCheSat=0;
+double Gspoil = 0;
+double GspoilPs = 0; 
+ 
+
+
+int rf_Shape_NO =0;  
+
+double TypeCheSat = 0;
+int tPs_Shape_NO = 0;
+//duration                     
+double tsel90 =2560; //us 
+double tsel180 = 2560;
+double tCheSat = 5120;
+double tSpoilCheSat = 5;
+double tPs = 3072;
+double tSpoilPs = 5;
+double tSpoil = 5;
+double tGsr = 1200;//1000;
+double tGcs = 200;//600;//1000;
+double tGrr = 1200;//1000;
+double tGrc = 400;//1000;
+double tGp = 1200;//1000;
+
+
+double tbefCheSat = 2;
+double tbefPs = 2;
+double tbef90 = 0;//2;
+double tbef180 =0;//2 ;
+
+double NumPs = 0;
+
+double tIRDelay_ms = 0;
+
+double ps_base = 0;
+double slice_base = 2;
+
+double TxPhFID=0;
+
+double rf90Bandwidth = 960.0;               
+double rf90Scale=12.5; 
+double rf180Scale=6.5; 
+double CheSat_mul = 10;
+double ps_mul = 10;     
+double gradWavePoint = 500.0;             
+double gradSamplePeriod = 1.0;//us                
+double rxGain = 0.0;//db                  
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//0??                      
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//0?? 
+double preDiscard = 2.0;
+double partialFreqSampling = 0;
+double ttxgatepost = 10.0;                
+double ttxgatepre = 10.0; 
+double trxgatepost = 10.0;                
+double trxgatepre = 10.0; 
+
+double sepeceSliceTime = 80000.0; // TR/noSliceBlock > sepeceSliceTime >TE * noEchos 
+
+
+double UnifiedTDelay = 10.0;//Unified time delay(US)
+
+
+double gating = 0;
+double cardiac_del= 0;
+
+double gp_on = 1;
+double gr_on = 1;
+
+
+             
+void main()
+{  
+	 double MainctrlTrigger_Ave_cnt;
+	 double current_batch_slice_cnt ;
+	 
+	 double current_view_2;
+	 
+  MainctrlTrigger_Ave_cnt = 0;
+  main_ctrl_start:
+  	current_batch_slice_cnt = 0;
+  	batch_slice_loop:
+  	
+  	current_view_2 = 0;
+  	phase_encode_loop_2:
+  	GenerateTrigger();
+   TimerCmp(TR,MS);
+   current_view_2 = current_view_2 + 1;
+   if ( current_view_2 < noScans )
+    goto phase_encode_loop_2;
+    
+   current_batch_slice_cnt = current_batch_slice_cnt + batch_slices;
+   if (current_batch_slice_cnt < noSliceBlock)                    
+    goto batch_slice_loop;
+    
+   MainctrlTrigger_Ave_cnt = MainctrlTrigger_Ave_cnt + view_block;       
+   if(MainctrlTrigger_Ave_cnt < noAverages)
+    goto main_ctrl_start;
+    
+    
+    Lend:
+    end; 
+    	
+    gradS:
+    {
+        double trampTime;
+        double fixDelayTime;
+        double delayTypeCheSatTime;
+        double current_ps;
+        double delayTime1;
+        double delayTime2;
+        int waveSel1_1 = 0;
+        int waveSel1_2 = 1;
+        int waveSel1_3 = 2;
+        int waveSel1_4 = 3;
+        int waveSel1_5 = 4;
+        int waveSel1_6 = 5;
+
+        double current_view;
+        double current_slice;
+        double slice_av;
+        double view_av; 
+        double disacq_cnt = 0;
+        double scan_cnt = 0;
+        double current_batch_slice =0;
+        double slice_cnt;
+        double slice_num =0;
+        double view_av_cnt;
+        double view_av_num = 1;
+        
+        //梯度爬升时间
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+        
+
+        averages_loop:
+        
+        //等待触发信号      
+        WaitTrigger(); 
+        scan_cnt = scan_cnt + 1;
+        if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *batch_slices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+        
+        current_view = 0.0;
+        noViews_loop: 
+    	
+        view_av=0;
+        view_av_cnt =0;
+        view_block_loop:
+    
+        discard_loop:
+    	
+        current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + batch_slices;
+        slice_cnt = 0;
+        if(gating==1){
+    	   if(cardiac_del>0)
+    		  {
+    			 fixDelayTime = fixDelayTime + cardiac_del;
+    	  	}
+        }
+        
+        multislice_loop:
+    
+        slice_av = 0;
+        slice_block_loop:
+
+        if(TypeCheSat>0){
+          delayTypeCheSatTime = tCheSat+ tIRDelay_ms+ tSpoilCheSat + tbefCheSat + trampTime*2;
+        }
+        else{
+          delayTypeCheSatTime = 0;
+        }
+
+        if(disacq_cnt < (no_disacq+1) ){
+          delayTime1 = fixDelayTime + trampTime*2 + tSpoil + delayTypeCheSatTime  +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*disacq_cnt + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;   
+         }
+         else{
+            delayTime1 = fixDelayTime + trampTime*2 + tSpoil + delayTypeCheSatTime  +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*no_disacq + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;
+         }
+ 
+        if(NumPs>0){
+        	
+        	current_ps = 0;
+        	multips_loop:
+  	        	 
+        	TimerCmp(delayTime1,US);
+         GradMatSel(current_ps+ps_base);
+         GradGainRegStart(trampTime,tPs+tbefPs,Gps,waveSel1_1);
+         GradGainRegStart(trampTime,0,Gps,waveSel1_2);
+        //	TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tPs+tbefPs,trampTime,Gps);
+          delayTime1 = delayTime1 + trampTime*4 + tPs + tbefPs + tSpoilPs ;
+          current_ps = current_ps+1;
+		      if ( current_ps < NumPs )
+			     goto multips_loop;
+			   
+			   delayTime2 =  delayTime1;//+ trampTime*4 + tPs + tSpoilPs ;
+        }
+        else{
+        	delayTime2 = delayTime1;
+        }
+        
+        
+        TimerCmp(delayTime2,US);
+        GradMatSel(current_slice + slice_base); //current_slice
+    //    GradMatSel(0);
+        
+        if(Gsr < 0){
+         GradScaleReg(Gs90);
+         GradWaveTable(waveSel1_1);
+         GradStartnew(trampTime,tsel90+tbef90);
+
+         GradScaleReg(Gs90-Gsr);  //Gsr
+         GradWaveTable(waveSel1_2);     
+         GradStartnew(trampTime,tGsr);
+
+         GradScaleReg(Gs180-Gsr);
+         GradWaveTable(waveSel1_1);
+         GradStartnew(trampTime,tsel180+tbef180);
+
+         GradScaleReg(Gsc-Gs180);
+         GradWaveTable(waveSel1_1);
+         GradStartnew(trampTime,tGcs);
+         GradScaleReg(Gsc);
+         GradWaveTable(waveSel1_2);
+         GradStartnew(trampTime,0);
+
+        }
+        else{
+        
+         GradScaleReg(Gs90);
+         GradWaveTable(waveSel1_1);
+         GradStartnew(trampTime,tsel90+tbef90);
+         GradWaveTable(waveSel1_2);
+         GradStartnew(trampTime,0);
+
+         GradScaleReg(Gsr );//Gsr  Gs90
+         GradWaveTable(waveSel1_2);
+         GradStartnew(trampTime,tGsr);
+         GradWaveTable(waveSel1_1);
+         GradStartnew(trampTime,0);
+
+         GradScaleReg(Gs180);
+         GradWaveTable(waveSel1_1);
+         GradStartnew(trampTime,tsel180+tbef180);
+
+         GradScaleReg(Gsc-Gs180);
+         GradWaveTable(waveSel1_1);//waveSel1_5
+         GradStartnew(trampTime,tGcs);
+         GradScaleReg(Gsc);
+         GradWaveTable(waveSel1_2); //waveSel1_4
+         GradStartnew(trampTime,0);
+         
+        }
+        
+        
+       slice_av = slice_av + 1;
+	     if ( slice_av < slice_block )
+		   goto slice_block_loop;
+    
+       current_slice = current_slice + 1;
+       slice_cnt = slice_cnt +1;
+	     if (current_slice < slice_num)                  
+	     goto multislice_loop;
+    
+       disacq_cnt = disacq_cnt + 1;
+       if ( disacq_cnt < (no_disacq+1) )
+       goto discard_loop;
+    
+       view_av = view_av + slice_block;
+       view_av_cnt = view_av_cnt + 1;
+       if (view_av < view_block) {
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto view_block_loop;   	 
+       } else{
+         view_av_num = view_av_cnt;                         
+       }
+	     current_view = current_view + 1.0;    
+       if(current_view < noScans_2){
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto noViews_loop;
+       } 
+
+      goto averages_loop;
+        
+    }
+    gradR:
+    {
+        double trampTime;
+        double fixDelayTime;
+        double delayTypeCheSatTime;
+        double current_ps;
+        double delayTime1;
+        double delayTime2;
+        double delayTime2_tmp;
+        double delayTime3;
+        double delayTime4;
+        double delayTime4_tmp;
+        double delayTime5;
+        int waveSel1_1 = 0;
+        int waveSel1_2 = 1;
+        int waveSel1_3 = 2;
+        int waveSel1_4 = 3;
+        int waveSel1_5 = 4;
+        int waveSel1_6 = 5;
+
+        double current_view;
+        double current_slice;
+        double slice_av;
+        double view_av;
+       // double Grr;
+        double noPreEffSample;
+        double preTacq;
+        double totalsample;
+        double tacq;
+        double Grr_addr;
+
+        double disacq_cnt = 0;
+        double scan_cnt = 0;
+        double current_batch_slice = 0;
+        double slice_cnt ;
+        double slice_num = 0;
+        double view_av_cnt;
+        double view_av_num =1;
+        
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5 + preDiscard;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        totalsample = preDiscard*2 +  noSamples;
+        tacq = AcquireDuration(samplePeriod,totalsample);
+        //梯度爬升时间
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+         
+        
+       
+        averages_loop:
+        
+        //等待触发信号      
+        WaitTrigger(); 
+        scan_cnt = scan_cnt + 1;
+        if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *batch_slices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+        current_view = 0.0;
+        noViews_loop: 
+    	
+        view_av=0;
+        view_av_cnt =0;
+        view_block_loop:
+    
+        discard_loop:
+    	
+        current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + batch_slices;
+        slice_cnt = 0;
+        if(gating==1){
+    	   if(cardiac_del>0)
+    		  {
+    			 fixDelayTime = fixDelayTime + cardiac_del;
+    	  	}
+        }
+        
+        multislice_loop:
+    
+        slice_av = 0;
+        slice_block_loop:
+        Grr_addr = current_slice;//+Grr_BaseAddr;
+        GradScaleRam( Grr_addr );	 
+        if(disacq_cnt < (no_disacq+1) ){
+        	 delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*disacq_cnt + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;	
+        }
+        else{
+        		delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*no_disacq + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;
+        }
+     //   delayTime1 = fixDelayTime+sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*(current_slice%batch_slices) + sepeceSliceTime*batch_slices*disacq_cnt + sepeceSliceTime*batch_slices*view_av+ sepeceSliceTime*batch_slices*view_block*current_view;
+        TimerCmp(delayTime1,US);
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tSpoil,trampTime,Gspoil);
+        if(TypeCheSat>0){
+        	 delayTime2 = delayTime1 + trampTime*2 + tSpoil + tbefCheSat + tCheSat+ tIRDelay_ms;//tCheSat+ tIRDelay_ms+ tSpoilCheSat + tbefCheSat + trampTime*2;
+           TimerCmp(delayTime2,US);
+           TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tSpoilCheSat,trampTime,GspoilCheSat);
+           delayTime2_tmp = delayTime2 + trampTime*2 + tSpoilCheSat;
+        }
+        else{
+          delayTime2_tmp = delayTime1 + trampTime*2 + tSpoil;
+        }
+        if(NumPs>0){
+        	current_ps = 0;
+         delayTime3 = delayTime2_tmp + trampTime*2 + tPs + tbefPs;
+        	multips_loop:
+                  	
+        	TimerCmp(delayTime3,US);
+        	TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tSpoilPs,trampTime,GspoilPs);
+        	         	        	
+          delayTime3 = delayTime3 + trampTime*4 + tSpoilPs + tPs + tbefPs;
+          current_ps = current_ps+1;
+		      if ( current_ps < NumPs )
+			     goto multips_loop;
+			   
+			   delayTime4_tmp =  delayTime3 - trampTime*2 - tPs -tbefPs;// + trampTime*4 + tPs + tSpoilPs ;
+        }
+        else{
+        	
+        	delayTime4_tmp = delayTime2_tmp;// + trampTime*2+tSpoilCheSat;
+        }
+        delayTime4 = delayTime4_tmp + trampTime + tsel90 + tbef90;
+        if(current_view == 0){
+        	 delayTime5 = delayTime4_tmp + trampTime + tbef90 + tsel90*0.5 + TE + te2_extend_1*1000- preTacq - trampTime*2 - tGrc;
+        }else if(current_view == 1){
+        	delayTime5 = delayTime4_tmp + trampTime + tbef90 + tsel90*0.5 + TE + te2_extend_2*1000- preTacq - trampTime*2 - tGrc;
+        }else if(current_view == 2){
+        	delayTime5 = delayTime4_tmp + trampTime + tbef90 + tsel90*0.5 + TE + te2_extend_3*1000- preTacq - trampTime*2 - tGrc;
+        }else{
+        	delayTime5 = delayTime4_tmp + trampTime + tbef90 + tsel90*0.5 + TE - preTacq - trampTime*2 - tGrc;
+        }
+        
+        TimerCmp(delayTime4,US);
+        if(gr_on==1)
+         TrapelutzoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tGrr,trampTime,Grr_addr );//Grr
+        else
+          TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tGrr,trampTime,0);
+        TimerCmp(delayTime5,US); 
+        GradScaleReg(Grc*gr_on);
+        GradWaveTable(waveSel1_1);//waveSel1_3
+        GradStartnew(trampTime,tGrc);
+        GradScaleReg((Grc-Gr)*gr_on);
+        GradWaveTable(waveSel1_2);//waveSel1_6
+
+        
+        GradStartnew(trampTime,tacq);
+        GradScaleReg(Gr*gr_on);
+        GradWaveTable(waveSel1_2);
+        GradStartnew(trampTime,0);
+
+        
+    //    Trapezoid_3_FixTrampTimeStart(waveSel1_3,waveSel1_6,waveSel1_2,tGrc,tacq,trampTime,Grc,Gr);
+        
+        slice_av = slice_av + 1;
+	     if ( slice_av < slice_block )
+		   goto slice_block_loop;
+    
+       current_slice = current_slice + 1;
+       slice_cnt = slice_cnt +1;       
+	     if (current_slice < slice_num)                 
+	     goto multislice_loop;
+    
+       disacq_cnt = disacq_cnt + 1;
+       if ( disacq_cnt < (no_disacq+1) )
+       goto discard_loop;
+    
+       view_av = view_av + slice_block;
+       view_av_cnt = view_av_cnt + 1;
+       if (view_av < view_block) {
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto view_block_loop;   	 
+       } else{
+         view_av_num = view_av_cnt;                         
+       }                         
+	     current_view = current_view + 1.0;    
+       if(current_view < noScans_2){
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto noViews_loop;
+       } 
+      goto averages_loop;
+    }
+    
+    gradP:
+    {
+        double trampTime;
+        double fixDelayTime;
+        double delayTypeCheSatTime;
+        double current_ps;
+        double delayTime1;
+        double delayTime2;
+        double delayTime2_tmp;
+        double delayTime3;
+        double delayTime4;
+        double delayTime4_tmp;
+        double delayTime5;
+        int waveSel1_1 = 0;
+        int waveSel1_2 = 1;
+        int waveSel1_3 = 2;
+        int waveSel1_4 = 3;
+        int waveSel1_5 = 4;
+        int waveSel1_6 = 5;
+
+        double current_view;
+        double current_slice;
+        double slice_av;
+        double view_av;
+  //      double Gp;
+        double noPreEffSample;
+        double preTacq;
+        double totalsample;
+        double tacq;
+        double Gp_addr;
+
+        double disacq_cnt =0;
+        double scan_cnt =0;
+        double current_batch_slice = 0;
+        double slice_cnt ;
+        double slice_num = 0;
+        double view_av_cnt ;
+        double view_av_num =1;
+        
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5 + preDiscard;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        totalsample = preDiscard*2 +  noSamples;
+        tacq = AcquireDuration(samplePeriod,totalsample);
+        //梯度爬升时间
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+        
+        
+       
+        averages_loop:
+        	
+        //等待触发信号      
+        WaitTrigger(); 
+   //     scan_cnt = scan_cnt + 1;
+        if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *batch_slices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+        current_view = 0.0;
+        noViews_loop: 
+    	
+        view_av=0;
+        view_av_cnt =0;
+        view_block_loop:
+    
+        discard_loop:
+    	
+        current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + batch_slices;
+        slice_cnt =0;
+        if(gating==1){
+    	   if(cardiac_del>0)
+    		  {
+    			 fixDelayTime = fixDelayTime + cardiac_del;
+    	  	}
+        }
+        
+        multislice_loop:
+    
+        slice_av = 0;
+        slice_block_loop: 
+     //   Gp_addr = current_view_2+Gp_BaseAddr;
+        Gp_addr = scan_cnt;//+Gp_BaseAddr;
+        GradScaleRam( Gp_addr ); 
+   //     scan_cnt = scan_cnt + 1;
+        if(disacq_cnt < (no_disacq+1) ){
+        	 delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*disacq_cnt + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;	
+        }
+        else{
+        		delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*no_disacq + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;
+        }
+     //   delayTime1 = fixDelayTime+sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*(current_slice%batch_slices) + sepeceSliceTime*batch_slices*disacq_cnt + sepeceSliceTime*batch_slices*view_av+ sepeceSliceTime*batch_slices*view_block*current_view;
+        TimerCmp(delayTime1,US);
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tSpoil,trampTime,Gspoil);
+        if(TypeCheSat>0){
+        	 delayTime2 = delayTime1 + trampTime*2 + tSpoil + tbefCheSat + tCheSat + tIRDelay_ms;//tCheSat+ tIRDelay_ms+ tSpoilCheSat + tbefCheSat + trampTime*2;
+           TimerCmp(delayTime2,US);
+           TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tSpoilCheSat,trampTime,GspoilCheSat);
+           delayTime2_tmp = delayTime2 + trampTime*2 + tSpoilCheSat;
+        }
+        else{
+        	 delayTime2_tmp = delayTime1 + trampTime*2 + tSpoil;
+        }
+        if(NumPs>0){
+        	current_ps = 0;
+         delayTime3 = delayTime2_tmp + trampTime*2 + tPs + tbefPs;
+        	multips_loop:
+        	
+        	TimerCmp(delayTime3,US);
+        	TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tSpoilPs,trampTime,GspoilPs);
+        	         	        	
+          delayTime3 = delayTime3 + trampTime*4 + tSpoilPs  + tPs + tbefPs;
+          current_ps = current_ps+1;
+		      if ( current_ps < NumPs )
+			     goto multips_loop;
+			   
+			   delayTime4_tmp =  delayTime3 - trampTime*2 -tPs - tbefPs;// + trampTime*4 + tPs + tSpoilPs ;
+        }
+        else{
+        	
+        	delayTime4_tmp = delayTime2_tmp;// + trampTime*2+tSpoilCheSat;
+        }
+        delayTime4 = delayTime4_tmp + trampTime + tsel90 + tbef90;
+        
+        
+        TimerCmp(delayTime4,US);
+        if(gp_on==1)
+         TrapelutzoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tGp,trampTime,Gp_addr ); //Gp
+        else
+         TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tGp,trampTime,0);
+        
+        slice_av = slice_av + 1;
+	     if ( slice_av < slice_block )
+		   goto slice_block_loop;
+    
+       current_slice = current_slice + 1;
+       slice_cnt = slice_cnt +1;
+	     if (current_slice < slice_num)                  
+	     goto multislice_loop;
+    
+       disacq_cnt = disacq_cnt + 1;
+       if ( disacq_cnt < (no_disacq+1) )
+       goto discard_loop;
+    
+       view_av = view_av + slice_block;
+       view_av_cnt = view_av_cnt + 1;
+       if (view_av < view_block) {
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto view_block_loop;   	 
+       }else{
+         view_av_num = view_av_cnt;                         
+       }                          
+	     current_view = current_view + 1.0;    
+       if(current_view < noScans_2){
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto noViews_loop;
+       } 
+       
+       scan_cnt = scan_cnt + 1;
+      goto averages_loop;
+    }
+    
+     tx1:
+    {
+       double trampTime;
+       double fixDelayTime;
+       double delayTime1;
+       double delayTime_CheSat; 
+       double delayTime_tPs; 
+       double delayTime_tsel90;
+       double delayTime_tsel180;
+       double CheSatoffsetFreq=0;
+       double CheSatoffsetPhase=0;
+       double tPsoffsetPhase=0;
+       double TxPh ;
+       double current_ps;
+
+       double current_view;
+        double current_slice;
+        double slice_av;
+        double view_av;
+        double disacq_cnt =0;
+        double disacq_cnt_2 =0;
+        double scan_cnt =0;
+        double current_batch_slice =0;
+        double slice_cnt ;
+        double slice_num =0;
+        double view_av_cnt ;
+        double view_av_num = 1;
+
+
+
+       trampTime = gradWavePoint * gradSamplePeriod;
+       fixDelayTime = UnifiedTDelay;
+       tx_start:
+       	
+       //等待触发信号      
+        WaitTrigger(); 
+        scan_cnt = scan_cnt + 1;
+        if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+         disacq_cnt_2 =0;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *batch_slices;
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0; 
+        current_view = 0.0;
+        noViews_loop: 
+    	
+        view_av=0;
+        view_av_cnt = 0;
+        view_block_loop:
+    
+        discard_loop:
+    	
+        current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + batch_slices;
+        slice_cnt = 0;
+        if(gating==1){
+    	   if(cardiac_del>0)
+    		  {
+    			 fixDelayTime = fixDelayTime + cardiac_del;
+    	  	}
+        }
+        
+        multislice_loop:
+    
+        slice_av = 0;
+        slice_block_loop: 
+       
+       
+       if(disacq_cnt < (no_disacq+1) ){
+        	 delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*disacq_cnt + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;	
+        }
+        else{
+        		delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*no_disacq + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;
+        }
+       
+       if(TypeCheSat>0){
+       	 delayTime_CheSat = delayTime1 + trampTime*2 + tSpoil + tbefCheSat ;
+       	 TxChannelShapeSel(CHANNEL1,TypeCheSat); 
+       	 TxFreqPhaseOffsetReg(CHANNEL1,CheSatoffsetFreq,CheSatoffsetPhase,KHZ);
+         TxAttReg(CHANNEL1,CheSat_mul);
+         TimerCmp(delayTime_CheSat,US);
+         TxStart(CHANNEL1,tCheSat,ttxgatepre,ttxgatepost);
+       }else{
+       	   delayTime_CheSat = delayTime1 + trampTime*2 + tSpoil ;
+       }
+       
+       if(NumPs>0){
+        	current_ps = 0;
+         if(TypeCheSat>0){
+              delayTime_tPs = delayTime_CheSat + tCheSat+ tIRDelay_ms+ trampTime*3 + tSpoilCheSat + tbefPs;
+         }
+         else{
+            delayTime_tPs = delayTime_CheSat + trampTime+ tbefPs;
+         }
+        	multips_loop:
+        	
+        	TxChannelShapeSel(CHANNEL1,tPs_Shape_NO);
+        	TxFreqOffsetRam(CHANNEL1,current_ps); 
+        	TxPhaseOffsetReg(CHANNEL1,tPsoffsetPhase);
+        	TxAttReg(CHANNEL1,ps_mul);
+          TimerCmp(delayTime_tPs,US);
+          TxStart(CHANNEL1,tPs,ttxgatepre,ttxgatepost);
+          
+          delayTime_tPs = delayTime_tPs + tPs + trampTime*4 + tSpoilPs + tbefPs ;
+          current_ps = current_ps+1;
+		      if ( current_ps < NumPs )
+			     goto multips_loop;
+			     
+			    delayTime_tsel90 = delayTime_tPs - tbefPs + tbef90;//+ trampTime;
+       }else{
+       	if(TypeCheSat>0){
+              delayTime_tsel90 = delayTime_CheSat + tCheSat+ tIRDelay_ms+ trampTime*3 + tSpoilCheSat + tbef90;
+         }
+         else{
+            delayTime_tsel90 = delayTime_CheSat + trampTime  + tbef90 ;
+         }
+       }
+       
+       if(Gsr<0){
+       	  delayTime_tsel180 = delayTime_tsel90 + tsel90 +trampTime*2 + tGsr + tbef180;
+       }else{
+       	  delayTime_tsel180 = delayTime_tsel90 + tsel90 +trampTime*4 + tGsr + tbef180;
+       }
+        
+       TxPh = 0;
+       if(disacq_cnt_2 ==1){
+       	TxPh = TxPhFID;
+       	disacq_cnt_2 = 0;
+       }
+		
+       TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+       TxFreqOffsetRam(CHANNEL1,current_slice); 
+       TxPhaseOffsetReg(CHANNEL1,TxPh);
+       TxAttReg(CHANNEL1,rf90Scale);
+       TimerCmp(delayTime_tsel90,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       
+       TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+       TxFreqOffsetRam(CHANNEL1,current_slice); 
+       TxPhaseOffsetReg(CHANNEL1,90);//400
+       TxAttReg(CHANNEL1,rf180Scale);
+       TimerCmp(delayTime_tsel180,US);
+       TxStart(CHANNEL1,tsel180,ttxgatepre,ttxgatepost);
+       
+       
+       
+       slice_av = slice_av + 1;
+	     if ( slice_av < slice_block )
+		   goto slice_block_loop;
+    
+       current_slice = current_slice + 1;
+       slice_cnt = slice_cnt +1;
+	     if (current_slice < slice_num)                //  /* Multislicing*/
+	     goto multislice_loop;
+    
+       disacq_cnt = disacq_cnt + 1;
+       disacq_cnt_2 = disacq_cnt_2 + 1;
+       if ( disacq_cnt < (no_disacq+1) )
+       goto discard_loop;
+    
+       view_av = view_av + slice_block;
+       view_av_cnt = view_av_cnt + 1;
+       if (view_av < view_block) {
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto view_block_loop;   	 
+       } else{
+         view_av_num = view_av_cnt;                         
+       }                      
+	     current_view = current_view + 1.0;    
+       if(current_view < noScans_2){
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto noViews_loop;
+       } 
+       
+    
+    goto tx_start;
+    }
+
+    rx1:
+    {
+        double trampTime;
+        double fixDelayTime;
+        double sample_period;
+        double delayTime1;
+        double delayTime2;
+        double delayTime3;
+        double delayTime_c1;
+        double sample_total;
+        double preTacq;
+        double noPreEffSample;
+
+        double current_view;
+        double current_slice;
+        double slice_av;
+        double view_av;
+        double disacq_cnt =0;
+        double scan_cnt =0;
+        double current_batch_slice=0;
+        double slice_cnt;
+        double slice_num=0;
+        double view_av_cnt;
+        double view_av_num = 1;
+        double echoes ;
+
+        rx_start:
+      	//多通道0~3定义。
+        RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);
+        RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data);
+        RxFreqOffsetReg(CHANNEL3,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL3,rx_ph_offset_data);
+        RxFreqOffsetReg(CHANNEL4,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL4,rx_ph_offset_data);
+
+        sample_total =preDiscard +  noSamples;//总采样点数。
+        sample_period=RxChannelAcquirePara(samplePeriod,sample_total);//总采样时长。
+
+        RxGainReg(CHANNEL1,rxGain);  //ch, db att
+        RxGainReg(CHANNEL2,rxGain);  //ch, db att
+        RxGainReg(CHANNEL3,rxGain);  //ch, db att
+        RxGainReg(CHANNEL4,rxGain);  //ch, db att
+
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = TX_FILTER_DELAY-trxgatepre+UnifiedTDelay;
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        
+        //等待触发信号           
+        WaitTrigger(); 
+        scan_cnt = scan_cnt + 1;
+        if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;  
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *batch_slices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+        current_view = 0.0;
+        noViews_loop: 
+    	
+        view_av=0;
+        view_av_cnt =0;
+        view_block_loop:
+    
+        discard_loop:
+    	
+        current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + batch_slices;
+        slice_cnt = 0;
+        if(gating==1){
+    	   if(cardiac_del>0)
+    		  {
+    			 fixDelayTime = fixDelayTime + cardiac_del;
+    	  	}
+        }
+        
+        multislice_loop:
+    
+        slice_av = 0;
+        slice_block_loop: 
+
+        if(disacq_cnt < (no_disacq+1) ){
+        	 delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*disacq_cnt + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;	
+        }
+        else{
+        		delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*slice_block*slice_cnt + sepeceSliceTime*slice_block*batch_slices*no_disacq + sepeceSliceTime*slice_block*batch_slices*view_av_cnt+ sepeceSliceTime*slice_block*batch_slices*view_av_num*current_view;
+        }
+        
+        if(TypeCheSat>0){
+            delayTime2 = delayTime1 + trampTime*4 + tSpoil + tbefCheSat + tCheSat + tIRDelay_ms + tSpoilCheSat;
+        }else{
+            delayTime2 = delayTime1 + trampTime*2 + tSpoil;
+        }
+        
+        
+        delayTime3 = delayTime2 + (trampTime*4 + tSpoilPs + tPs + tbefPs)*NumPs; 	 
+        if(current_view == 0){
+        	 delayTime_c1 = delayTime3 + trampTime + tbef90 + tsel90*0.5 + TE + te2_extend_1*1000- preTacq ;
+        }else if(current_view == 1){
+        	delayTime_c1 = delayTime3 + trampTime + tbef90 + tsel90*0.5 + TE + te2_extend_2*1000- preTacq ;
+        }else if(current_view == 2){
+        	delayTime_c1 = delayTime3 + trampTime + tbef90 + tsel90*0.5 + TE + te2_extend_3*1000- preTacq ;
+        } else{
+        	delayTime_c1 = delayTime3 + trampTime + tbef90 + tsel90*0.5 + TE - preTacq ;
+        }
+
+        //收端采样波形。
+        TimerCmp(delayTime_c1,US);
+        if(disacq_cnt < no_disacq){
+        	RxStart(0,trxgatepre,trxgatepost,sample_period);
+        }else{
+        	RxStart(15,trxgatepre,trxgatepost,sample_period);
+        }
+        echoes = noEchoes;
+
+        slice_av = slice_av + 1;
+	     if ( slice_av < slice_block )
+		   goto slice_block_loop;
+    
+       current_slice = current_slice + 1;
+       slice_cnt = slice_cnt +1;
+	     if (current_slice < slice_num)                //  /* Multislicing*/
+	     goto multislice_loop;
+    
+       disacq_cnt = disacq_cnt + 1;
+       if ( disacq_cnt < (no_disacq+1) )
+       goto discard_loop;
+    
+       view_av = view_av + slice_block;
+       view_av_cnt = view_av_cnt + 1;
+       if (view_av < view_block) {
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto view_block_loop;   	 
+       }else{
+         view_av_num = view_av_cnt;                         
+       }                          
+	     current_view = current_view + 1.0;    
+       if(current_view < noScans_2){ //noScans_1
+    	 disacq_cnt = disacq_cnt - 1;
+    	 goto noViews_loop;
+       } 
+
+        goto rx_start;
+    }
+    
+    
+
+
+}
+      
+
+
+
+
+
+

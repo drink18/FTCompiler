@@ -1,0 +1,328 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    ge_lut_seq.src                                            
+Author           :    firtech                                            
+Contacts         :                                                
+Date             :    2016.11.30                                            
+File version     :                                                
+Key words        :                                                
+File discription :    GE序列代码编写，发射一个90度软脉冲，
+                      接收采集回波信号。添加选层、读出、相位编码梯度信号。                                            
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+        
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1.0;                         
+double noScans  = 256.0;  
+double noAverages = 1.0;                     
+double noSliceBlock = 1.0;                       
+double noSamples =256.0; 
+double samplePeriod=50.0; 
+double effectiveEcho = 1.0; 
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double TR = 100.0;//ms        
+double TE = 20000.0;//us
+double distanceSlice1 = 0.0;
+double thickSlice = 5.0;
+double seperationSlice = 10.0;
+double orderSlice = 1.0;
+double partialFreqSampling = 0.0;
+double partialPhaseSampling = 0.0;
+double modeAverage = 0.0;
+double dummyShot = 0.0;
+double modePhaseCode = 1.0;
+double orderPhaseCode = 0.0;
+double modePartialPhaseSampling = 0.0;
+int    rf_Shape_NO =4;                       
+double tsel90 =3000.0; //us 
+double tsel180 =3000.0; //us  
+double rf90Bandwidth = 2000.0;               
+double attRamAddr=1561;      
+double rf180Scale=2.8;  
+double gradWavePoint = 500.0;             
+double gradSamplePeriod = 1.0;//us                
+double rxGain = 0.0;//db                  
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//degree                      
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//degree 
+double preDiscard = 2.0;
+double gradMax = 1.0;
+double thickSliceRatioGain = 1.32;// 层后修正因子
+double gradMatrixSel = 0;
+double sepeceSliceTime = 40000.0; // 多层扫描时，每层扫描时间间隔。取值范围为：TR/noSliceBlock > sepeceSliceTime > TE * noEchos 
+double gradmaxSlice = 1.0;
+double gradmaxRead = 1.0;
+double gradmaxPhase = 1.0;
+double gainEffPhase = 300.0;
+double ratiaFreqOversampling = 1.0;
+double tcrushIn = 0.0;
+double scaleRamAddr = 0.0;
+             
+void main()
+{   
+  MainctrlTrigger( noAverages, noScans, TR);
+
+/*-----------------------------------------------------   
+ 选层梯度模块，ge序列需要在90度射频脉冲上施加
+ 选层和重聚相梯度。                     
+------------------------------------------------------*/  
+
+    gradS:
+    {
+
+      double trampTime;
+      double fixDelayTime;
+      double holdTime1;
+      double holdTime2;
+      double holdTime3;
+      double holdTime4;
+      double delayTime1;
+      double delayTime2;
+      double rep_cnt = 0.0;
+      double rep_cnt1;
+      int    waveSel1_1;
+      int    waveSel1_2;
+      double gradGain1;
+      double gradGain2;
+      double gradGain3;
+      double tcrush;      
+      double AR1;
+      
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_RF_FIS_GRA_SEC_DELAY ;
+      
+      averages_loop:                                                                              //平均循环结构
+        GradMatSel(gradMatrixSel);                                                                //选择旋转矩阵 
+        gradGain1 = rf90Bandwidth/(thickSlice*thickSliceRatioGain);                               //计算选层梯度增益 
+        tcrush = TcrushGenerate( tcrushIn, gradGain1, thickSlice, thickSliceRatioGain, trampTime);//计算crush时间
+        AR1 = 0.5*gradGain1*(tsel90+trampTime);                                                   //用以计算重相梯度增益中间变量
+        holdTime1 = tsel90;                                                                       //选层梯度保持时间
+        holdTime2 = 0.0;   
+        holdTime3 = PreGardTime( tcrush, tsel90, TE , trampTime);                                 //计算重相梯度保持时间
+        gradGain2 = AR1/(holdTime3+trampTime);                                                    //计算重相梯度增益       
+        waveSel1_1 = 0;                                                                           //选择梯度波形1
+        waveSel1_2 = 1;                                                                           //选择梯度波形2        
+        rep_cnt = 0.0;                                                                            //多层扫描循环计数器
+        WaitTrigger();                                                                            //等待trigger信号        
+        slice_loop:                                                                               //多层扫描循环结构
+          delayTime1 = fixDelayTime + sepeceSliceTime*rep_cnt;                                    //计算开始施加选层梯度时间
+          TimerCmp(delayTime1,US);                                                                //等待delayTime1后开始施加选层梯度
+          TrapezoidTwoFixTrampTimeStart( waveSel1_1,waveSel1_2,waveSel1_2,waveSel1_1,\
+                                         holdTime1,  holdTime2,  holdTime3, trampTime,gradGain1, gradGain2);//产生梯度波形
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSliceBlock )
+          goto slice_loop;        
+      goto averages_loop;
+    }
+
+/*-----------------------------------------------------   
+ 读出梯度模块，根据ge序列需求计算和配置相关参数，
+ 施加读出梯度。                     
+------------------------------------------------------*/
+       
+    gradR:
+    {       
+      double trampTime;
+      double fixDelayTime;
+      double holdTime1;
+      double holdTime2;
+      double delayTime1;
+      double delayTime2;
+      double rep_cnt = 0.0;
+      int waveSel1_1;
+      int waveSel1_2;
+      double gradGain1;
+      double gradGain2;
+      double tcrush;
+      double AR1;
+      double gradGaintmp;
+      double preTacq;
+      double tacq;
+      double totalsample = 0.0;
+      double noPreEffSample ;
+      double read_bandwidth;     
+      
+      noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+      preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+      totalsample = preDiscard +  noSamples;
+      tacq = AcquireDuration(samplePeriod,totalsample);
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_RF_FIS_GRA_SEC_DELAY ;
+      gradGain2 = GardReadGain( samplePeriod, gradmaxRead, gradMax, fovRead, ratiaFreqOversampling);//计算读出梯度增益
+      holdTime2 = tacq;
+      tcrush = preTacq; 
+      holdTime1 = GardPhaseTime( fovPhase, gainEffPhase, noScans ,  noEchoes,  dummyShot, trampTime);//计算预聚相梯度保持时间
+      AR1 = (preTacq+trampTime*0.5) * gradGain2;
+      waveSel1_1 = 0;
+      waveSel1_2 = 1;
+      
+      averages_loop:                                                                       //平均循环结构
+        gradGain1 = AR1/(holdTime1+trampTime);                                             //计算读出预聚相梯度增益
+        rep_cnt = 0.0;                                                                     //多层扫描循环计数器       
+        WaitTrigger();                                                                     //等待trigger信号                                                          
+        slice_loop:                                                                        //多层扫描循环结构
+          delayTime1 = fixDelayTime + tsel90*0.5 + TE - preTacq  - holdTime1 - trampTime*2.0+ sepeceSliceTime*rep_cnt; //计算读出梯度施加时间
+          TimerCmp(delayTime1 ,US);                                                        //等待delayTime1时间开始施加读出梯度
+          TrapezoidTwoFixTrampTimeStart( waveSel1_2,waveSel1_1,waveSel1_1,waveSel1_2,\
+                                        holdTime1, 0.0, holdTime2, trampTime,gradGain1, gradGain2);//读出梯度波形产生                      
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSliceBlock )
+          goto slice_loop;           
+       goto averages_loop; 
+    }
+
+/*-----------------------------------------------------   
+ 相位编码梯度模块，根据ge序列需求计算和配置相关参数，
+ 施加相位编码梯度。                     
+------------------------------------------------------*/
+
+    gradP:
+    {       
+      double trampTime;
+      double fixDelayTime;
+      double holdTime1;
+      double delayTime1;
+      double delayTime2;
+      double rep_cnt = 0.0;
+      int    waveSel1_1;
+      int    waveSel1_2;
+      double gradGain1;
+      double gradpgain;
+      double tcrush;
+      double gradGaintmp;
+      double aftersample;
+      double noPreEffSample;
+      double preTacq;
+      double dummyShotEnout;
+      double echoBlockCnt = 0.0;
+      double effNoViewsHalf;
+      double effectiveNoScans;
+
+      noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+      preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_RF_FIS_GRA_SEC_DELAY ;
+      holdTime1 = GardPhaseTime( fovPhase, gainEffPhase, noScans ,  noEchoes,  dummyShot, trampTime);
+      gradpgain = gainEffPhase/gradmaxPhase * gradMax;
+      effNoViewsHalf=(noScans-dummyShot)*noEchoes*0.5;
+      effectiveNoScans = noScans - dummyShot ;
+      waveSel1_1 = 0;
+      waveSel1_2 = 1;  
+      averages_loop:
+        rep_cnt = 0.0;       
+        WaitTrigger(); 
+        echoBlockCnt =GradEnScanCnt( noAverages) ;                                 //扫描次数计数器，ge序列中等于noscans              
+        slice_loop:
+          delayTime1 = fixDelayTime + tsel90*0.5 + TE - preTacq  - holdTime1 - trampTime*2.0+ sepeceSliceTime*rep_cnt; //计算施加相位梯度的等待时间
+          /*gradGain1 = ModePhaseCodeGain( modePhaseCode, effectiveEcho, effectiveNoScans, noEchoes,\
+                            orderPhaseCode, modePartialPhaseSampling, partialPhaseSampling,\
+                            effNoViewsHalf, echoBlockCnt, 1.0, gradpgain);                                             //计算相位编码梯度增益(计算模式)*/
+          GradScaleRam( scaleRamAddr );                                                                                  //相位编码梯度增益(查表模式)
+          TimerCmp(delayTime1,US);                                                                                     //等待delayTime1时间开始施加相位编码梯度
+          //TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,holdTime1,trampTime,gradGain1 );                      //开始产生相位编码梯度波形(计算模式)        
+          TrapelutzoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,holdTime1,trampTime,scaleRamAddr );                  //开始产生相位编码梯度波形(查表模式)
+          scaleRamAddr = scaleRamAddr + 1;
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSliceBlock )
+          goto slice_loop;          
+      goto averages_loop; 
+    }  
+
+/*-----------------------------------------------------   
+ 发射模块，根据ge序列需求计算和配置相关参数，
+ 每个Scan发射一个90度软脉冲。                     
+------------------------------------------------------*/
+ 
+    tx1:
+    {
+      double trampTime;
+      double fixDelayTime;
+      double delayTime_rf90_1; 
+      double delayTime_rf180_c1; 
+      double rep_cnt = 0.0;
+      double ttxgatepost = 10.0;                
+      double ttxgatepre = 10.0; 
+      double noSlice=0.0;     
+      double tx_freq_offset_data_tmp;
+      TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = trampTime;
+      
+      tx_start:
+        TxFirReset(); 
+        WaitTrigger();
+        TxAvePhase( modeAverage,noAverages,tx_freq_offset_data, tx_ph_offset_data,KHZ, CHANNEL1);   
+        rep_cnt = 0.0;
+       
+        slice_loop:
+          noSlice = TxSliceCount( orderSlice,  noSliceBlock, rep_cnt);                    //多层扫描时，扫描层数位置标号
+          TxFreqSet( orderSlice, distanceSlice1, seperationSlice,thickSlice,
+                       noSlice, rf90Bandwidth, CHANNEL1,thickSliceRatioGain);             //多层扫描时，计算不同选层发射脉冲的频率
+          delayTime_rf90_1 = fixDelayTime+sepeceSliceTime*rep_cnt;                        //计算开始发射射频脉冲时间
+          TxPhaseOffsetReg(CHANNEL1,0.0);                                                 //设置发射脉冲相偏
+          //TxAttReg(CHANNEL1,rf90Scale);                                                   //设置发射脉冲幅度(计算模式)
+          TxAttRam(CHANNEL1,attRamAddr);                                                  //设置发射脉冲幅度(查表模式)
+          TimerCmp(delayTime_rf90_1,US);                                                  //等待delayTime_rf90_1时间，开始发射射频脉冲
+          TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);                                //开始发射射频脉冲，打开射频发射门控，设置提前开启和延后关闭门控时间
+          
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSliceBlock )
+          goto slice_loop;   
+      goto tx_start;
+    }
+
+/*-----------------------------------------------------   
+ 接收模块，根据ge序列需求计算和配置相关参数，
+ 每个Scan采集一个回波信号。                     
+------------------------------------------------------*/
+
+    rx1:
+    {
+      double trampTime;
+      double fixDelayTime;
+      double sample_period;
+      double delayTime_1; 
+      double delayTime_c1; 
+      double rep_cnt = 0.0;
+      double sample_total;
+      double preTacq;
+      double noPreEffSample;
+      double trxgatepre = 10.0;                 
+      double trxgatepost = 10.0; 
+
+      rx_start:
+      
+        RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);                                  //设置接收通道1的频偏
+        RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);                                       //设置接收通道1的相偏      
+        sample_total =preDiscard +  noSamples;                                              //计算总的采集点数
+        sample_period=RxChannelAcquirePara(samplePeriod,sample_total);                      //计算总的采集时间
+        RxGainReg(CHANNEL1,rxGain);                                                         //设置接收通道1的增益
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = TX_FILTER_DELAY-trxgatepre+trampTime;
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        WaitTrigger();
+        rep_cnt = 0.0; 
+        slice_loop:
+          delayTime_c1 = fixDelayTime+TE-preTacq+tsel90*0.5 +sepeceSliceTime*rep_cnt; 
+          TimerCmp(delayTime_c1,US);
+          RxStart(CHANNEL1,trxgatepre,trxgatepost,sample_period);                           //打开接收通道1，开始采集，设置采集门控提前开启和延后关闭时间                  
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSliceBlock )
+        goto slice_loop;         
+      goto rx_start;
+    }
+
+}

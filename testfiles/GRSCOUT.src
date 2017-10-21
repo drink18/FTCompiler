@@ -1,0 +1,850 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    grscout.src                                            
+Author           :    liwanru                                            
+Contacts         :                                                
+Date             :    2017.04.24                                           
+File version     :                                                
+Key words        :                                                
+File discription :                                                
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+2017.04.24   liwanru           v1.0      
+========================================================
+
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1.0;                         
+double noScans  = 256;  
+double noAverages = 1.0;                     
+double noSliceBlock = 3.0; //总层数。
+double noViewBlock = 1.0;//相位编码的平均次数。 
+double SliceBlock = 1.0;//最内层的循环，其他条件均不变的平均次数。 
+double BatchSlices = 3.0;//每个TR内的层数。
+double NumPs = 0;//预饱和循环次数。若等于0，则无预饱和。
+double noSamples =256.0; 
+double samplePeriod=30.0; 
+double effectiveEcho = 1.0; 
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double TR = 500.0;//ms        
+double TE = 20000.0;//us
+
+double MAX_SPOIL = 160;
+double rfsp_on = 0;
+
+double partialFreqSampling = 0.0;
+
+double no_disacq = 0.0;
+double flow_comp_on = 2.0;//0:不开FC；1:GR开FC；2:GS开FC；3:GR和GS开FC；
+
+int rf_Shape_NO =0;  
+int tPs_Shape_NO = 1;                     
+double tsel90 =2560.0; //us 
+double tselps = 5000.0;
+double rf90Bandwidth = 960.0;               
+double rf90Scale=12.5;    
+double gradWavePoint = 500.0;             
+double gradSamplePeriod = 1.0;//us                
+double rxGain = 0.0;//db                  
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//0??                      
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//0?? 
+double preDiscard = 2.0;
+
+double gradMatrixSel = 2;
+double sepeceSliceTime = 60000.0; // TR/noSliceBlock > sepeceSliceTime >TE * noEchos 
+
+
+double UnifiedTDelay = 50.0;//Unified time delay(US)
+double tRstartDelay = 100.0;
+
+double tSpoilPsS = 5.0;
+double tSflowcom = 2000;
+double tGsr = 1030;//4000;
+double tGspoil = 5;
+double tGrr = 1374;//4000;
+double tRFlowCom = 2000;
+double tGp = 1200;//4000.0;
+double tGpr = 1200;//4000.0;   
+double rfpsScale=12.5; 
+
+double tSpoilPs = 5;
+double tSpoilS =5;
+
+
+//double slice_batch_start = 0;
+double ps_matrix_base = 0;
+
+double Gps = 200;
+double Gs90 = 146;//200;
+double Gsr= 146;//200;
+double Gsfc=200;
+double Gspoil=200;
+      
+double tbefPs = 2;
+double tbef90 = 2;
+      
+double GspoilPs = 100.0;
+double Gr = 133;//200.0;
+double Grr = 282;//200.0;
+double Grfc = 200.0;
+
+double grsp_on = 1;
+double gp_on = 1;
+      
+     
+void main()
+{
+   double slice_batch_start;
+   double MainctrlTrigger_Ave_cnt;
+   double MainctrlTrigger_scan_cnt;
+   //产生触发信号
+   //MainctrlTrigger( noAverages, noScans, TR);
+   MainctrlTrigger_Ave_cnt = 0.0; 
+   main_ctrl_start:
+   
+   slice_batch_start = 0;         
+   slice_batch_loop:
+   
+//disacq_cnt = 0;  
+   MainctrlTrigger_scan_cnt = 0;      
+   phase_encode_loop: 
+   GenerateTrigger(); 
+   TimerCmp(TR,MS); 
+    
+   MainctrlTrigger_scan_cnt = MainctrlTrigger_scan_cnt + 1.0; 
+   if( MainctrlTrigger_scan_cnt < noScans)
+      goto phase_encode_loop;
+         
+   slice_batch_start = slice_batch_start + BatchSlices ;//noSliceBlock;
+   if (slice_batch_start < noSliceBlock)          
+      goto slice_batch_loop;
+    
+   MainctrlTrigger_Ave_cnt = MainctrlTrigger_Ave_cnt + noViewBlock;    
+   if(MainctrlTrigger_Ave_cnt < noAverages)
+      goto main_ctrl_start;
+   Lend:
+   end;
+
+
+   gradS:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double delayTime1;
+      double delayTime2;
+      double delayTime3;
+      double delayTime4;
+      double gs_var;
+      double ps_cnt;
+      int waveSel1_1;
+      int waveSel1_2;
+      int waveSel1_3;
+      int waveSel1_4;
+      int waveSel1_5;
+      int waveSel1_6;
+ //     int gs_matrix_sel;
+      double tps;
+      double aftersample;
+      double afterTacq;
+      double Delay_ps;
+
+     
+      
+      double current_slice;
+      double slice_av;
+      double view_av; 
+      double disacq_cnt = 0;
+      double scan_cnt = 0;
+      double current_batch_slice =0;
+      double slice_cnt;
+      double slice_num =0;
+      double view_av_cnt;
+      double view_av_num = 1;
+        
+        
+      waveSel1_1 = 0;
+      waveSel1_2 = 1;
+      waveSel1_3 = 2;
+      waveSel1_4 = 3;
+      waveSel1_5 = 4;
+      waveSel1_6 = 5;
+        
+      //梯度爬升时间
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay;
+      if(tSpoilPs > tSpoilPsS)
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPs ;
+      else
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPsS ;
+        
+      aftersample = preDiscard + (noSamples + partialFreqSampling)*0.5;//aftersample+noPreEffSample=noSamples+preDiscard
+      afterTacq = AcquireDuration(samplePeriod,aftersample);
+
+      averages_loop://最外层循环
+      //等待触发信号      
+      WaitTrigger(); 
+      scan_cnt = scan_cnt + 1;
+        if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) * BatchSlices;// batch_slices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+          
+      view_av = 0;
+      view_av_cnt =0;    
+      view_block_loop:
+        
+      discard_loop:
+
+      current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + BatchSlices;
+        slice_cnt = 0;
+        
+      multislice_loop:
+      slice_av = 0;
+   //   gs_matrix_sel = 0;
+      
+      slice_block_loop:
+      	
+      if(disacq_cnt <= no_disacq){
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*disacq_cnt + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;   
+      }
+         else{
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*no_disacq + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;
+      }
+         
+         
+      if(NumPs > 0)
+      {
+      	 ps_cnt = 0;
+         multips_loop://预饱和循环
+         Delay_ps = delayTime1 + tps*ps_cnt;//fixDelayTime + tps*ps_cnt + sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+         TimerCmp(Delay_ps,US); 
+         GradMatSel(ps_matrix_base + ps_cnt);
+         //-------奇数个爬升坡，调用底层代码
+         GradScaleReg(Gps);
+         GradWaveTable(waveSel1_1);//选择第一段波形
+         GradStartnew(trampTime,tselps+tbefPs);//开始发射第一段波形
+         GradScaleReg(Gps);
+         GradWaveTable(waveSel1_5);//选择第二段波形
+         GradStartnew(trampTime,tSpoilPsS);//开始发射第二段波形
+         GradScaleReg(Gps);
+         GradWaveTable(waveSel1_4);//选择第三段波形
+         GradStartnew(trampTime,0);//开始发射第三段波形
+           
+  //       Delay_ps = Delay_ps + tps;   
+         ps_cnt = ps_cnt + 1;
+         if(ps_cnt < NumPs)   
+            goto  multips_loop;                  
+      }
+         
+      delayTime2 = delayTime1 + tps*NumPs;
+      delayTime3 = delayTime1 + tps*NumPs  + trampTime + tbef90 + tsel90*0.5 + TE + afterTacq ;
+         
+      TimerCmp(delayTime2,US);  
+      GradMatSel(gradMatrixSel); 
+      if(flow_comp_on == 0)//( (flow_comp_on==0)|(flow_comp_on==1) )//GS不开启FC
+         TrapezoidTwoFixTrampTimeStart( waveSel1_1, waveSel1_2, waveSel1_2, waveSel1_1,\
+                                           tsel90, 0.0, tGsr, trampTime, Gs90+tbef90, Gsr); 
+
+      else if (flow_comp_on == 1)
+         TrapezoidTwoFixTrampTimeStart( waveSel1_1, waveSel1_2, waveSel1_2, waveSel1_1,\
+                                           tsel90, 0.0, tGsr, trampTime, Gs90+tbef90, Gsr); 
+
+//      else if (flow_comp_on == 2)
+//         TrapezoidThreeFixTrampTimeStart( waveSel1_1, waveSel1_2, waveSel1_2, waveSel1_1, waveSel1_1, waveSel1_2,\
+//                                             tsel90, 0.0, tGsr, 0.0, tSflowcom, trampTime, Gs90, Gsr, Gsfc);
+      else
+         TrapezoidThreeFixTrampTimeStart( waveSel1_1, waveSel1_2, waveSel1_2, waveSel1_1, waveSel1_1, waveSel1_2,\
+                                             tsel90, 0.0, tGsr, 0.0, tSflowcom, trampTime, Gs90+tbef90, Gsr, Gsfc);   
+ 
+      TimerCmp(delayTime3,US); 
+      TrapezoidOneFixTrampTimeStart( waveSel1_2, waveSel1_1, tGspoil, trampTime, Gspoil*grsp_on);
+   
+      slice_av = slice_av + 1;                                                                                    
+      if( slice_av < SliceBlock )                    
+         goto slice_block_loop;//最内层的循环，其他条件均不变的平均次数。
+         
+      current_slice = current_slice + 1;
+      slice_cnt = slice_cnt +1;
+      if (current_slice < slice_num)                  
+         goto multislice_loop;//当前TR下的层数累计。
+         
+      disacq_cnt = disacq_cnt + 1;      
+      if ( disacq_cnt <= no_disacq  )
+         goto discard_loop;
+           
+      view_av = view_av + SliceBlock;
+      view_av_cnt = view_av_cnt + 1;
+      if (view_av < noViewBlock)  //相位编码的平均次数                     
+         goto view_block_loop;
+      else
+         view_av_num = view_av_cnt;                         
+       
+   
+      goto averages_loop;
+   }
+       
+   gradR:
+   {     
+      double trampTime;
+      double fixDelayTime;
+      double t_comp;
+      double delayTime1;      
+      double delayTime2; 
+      double delayTime3;
+      double delayTime4;
+      double gr_var;
+      double gr_comp;   
+      double preTacq;
+      double tacq;
+      double totalsample;
+      double noPreEffSample;
+      double ps_cnt;
+      int waveSel1_1;
+      int waveSel1_2;
+      double Delay_ps;
+
+      double tps;
+      
+      double current_slice;
+      double slice_av;
+      double view_av; 
+      double disacq_cnt = 0;
+      double scan_cnt = 0;
+      double current_batch_slice =0;
+      double slice_cnt;
+      double slice_num =0;
+      double view_av_cnt;
+      double view_av_num = 1;
+
+      //梯度爬升时间
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay;
+      
+      noPreEffSample = (noSamples - partialFreqSampling)*0.5 + preDiscard;
+      preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+      totalsample = 2*preDiscard +  noSamples;
+      tacq = AcquireDuration(samplePeriod,totalsample);
+      if(tSpoilPs > tSpoilPsS)
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPs ;
+      else
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPsS ;
+
+      
+
+      waveSel1_1 = 0;
+      waveSel1_2 = 1;
+
+      averages_loop:
+      //等待触发信号      
+      WaitTrigger(); 
+      
+      scan_cnt = scan_cnt + 1;
+        if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *BatchSlices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+      
+      view_av = 0;  
+      view_av_cnt =0;  
+      view_block_loop:
+              
+      discard_loop:
+      current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + BatchSlices;
+        slice_cnt = 0; 
+        
+      multislice_loop:
+      slice_av = 0;
+        
+      slice_block_loop:
+      	
+      if(disacq_cnt <= no_disacq  ){
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*disacq_cnt + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;   
+      }
+         else{
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*no_disacq + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;
+      }
+      
+      ps_cnt = 0;  
+         
+      if(NumPs > 0)
+      {
+         multips_loop://预饱和循环
+         Delay_ps = delayTime1 + trampTime + tselps + tbefPs + tSpoilS+ tps*ps_cnt ;//+ sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+         TimerCmp(Delay_ps,US); 
+         TrapezoidOneFixTrampTimeStart( waveSel1_1, waveSel1_2, tSpoilPs, trampTime, GspoilPs);
+            
+         ps_cnt = ps_cnt + 1;
+         if(ps_cnt < NumPs)   
+            goto  multips_loop;                  
+      }
+         
+      if(flow_comp_on == 0)//( (flow_comp_on==0)|(flow_comp_on==2) )//GR不开启FC
+      {
+         delayTime2 = delayTime1 + tps*NumPs + tbef90 + tsel90*0.5 + TE - preTacq - trampTime*2.0 - tGrr;// + sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+         TimerCmp(delayTime2,US);
+         TrapezoidTwoFixTrampTimeStart( waveSel1_2, waveSel1_1, waveSel1_1, waveSel1_2,\
+                                             tGrr, 0.0, tacq, trampTime, Grr, Gr);  
+      }
+      else if (flow_comp_on == 1)
+      {
+         delayTime2 = delayTime1 + tps*NumPs + tbef90 + tsel90*0.5 + TE - preTacq - trampTime*4.0 - tGrr - tRFlowCom;// + sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+         TimerCmp(delayTime2,US);
+         TrapezoidThreeFixTrampTimeStart( waveSel1_1, waveSel1_2, waveSel1_2, waveSel1_1, waveSel1_1, waveSel1_2,\
+                                             tRFlowCom, 0.0, tGrr, 0.0, tacq, trampTime, Grfc, Grr, Gr);
+      }
+      else if (flow_comp_on == 2)
+      {
+         delayTime2 = delayTime1 + tps*NumPs + tbef90 + tsel90*0.5 + TE - preTacq - trampTime*2.0 - tGrr ;//+ sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+         TimerCmp(delayTime2,US);
+         TrapezoidTwoFixTrampTimeStart( waveSel1_2, waveSel1_1, waveSel1_1, waveSel1_2,\
+                                             tGrr, 0.0, tacq, trampTime, Grr, Gr);    
+      }
+      else
+      {
+         delayTime2 = delayTime1 + tps*NumPs + tbef90 + tsel90*0.5 + TE - preTacq - trampTime*4.0 - tGrr - tRFlowCom ;//+ sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+         TimerCmp(delayTime2,US);
+         TrapezoidThreeFixTrampTimeStart( waveSel1_1, waveSel1_2, waveSel1_2, waveSel1_1, waveSel1_1, waveSel1_2,\
+                                             tRFlowCom, 0.0, tGrr, 0.0, tacq, trampTime, Grfc, Grr, Gr);
+      }
+         
+      slice_av = slice_av + 1;                                                                                    
+      if( slice_av < SliceBlock )                    
+         goto slice_block_loop;//最内层的循环，其他条件均不变的平均次数。
+         
+      current_slice = current_slice + 1;
+      slice_cnt = slice_cnt +1;
+      if (current_slice < slice_num)                  
+         goto multislice_loop;//当前TR下的层数累计。
+         
+      disacq_cnt = disacq_cnt + 1;      
+      if ( disacq_cnt <= no_disacq )
+         goto discard_loop;
+           
+      view_av = view_av + SliceBlock;
+      view_av_cnt = view_av_cnt + 1;
+      if (view_av < noViewBlock)  //相位编码的平均次数                     
+         goto view_block_loop;
+      else
+         view_av_num = view_av_cnt;  
+
+      goto averages_loop;
+   }
+
+   gradP:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double delayTime1;
+      double delayTime2;
+      double delayTime3;
+      double ps_cnt;
+      double noPreEffSample;
+      double preTacq;
+      double aftersample;
+      double afterTacq;
+      int waveSel1_1;
+      int waveSel1_2;
+      double Delay_ps;
+      double scaleRamGpAddr = 0;
+      double scaleRamGprAddr = 0;
+      double tps;
+      double current_slice;
+      double slice_av;
+      double view_av; 
+      double disacq_cnt = 0;
+      double scan_cnt = 0;
+      double current_batch_slice =0;
+      double slice_cnt;
+      double slice_num =0;
+      double view_av_cnt;
+      double view_av_num = 1;
+        
+      //梯度爬升时间
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay;
+      if(tSpoilPs > tSpoilPsS)
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPs ;
+      else
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPsS ;
+      
+      noPreEffSample = (noSamples - partialFreqSampling)*0.5 + preDiscard;
+      preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+      aftersample = preDiscard + (noSamples + partialFreqSampling)*0.5;//aftersample+noPreEffSample=noSamples+preDiscard
+      afterTacq = AcquireDuration(samplePeriod,aftersample);
+
+     
+
+      waveSel1_1 = 0;
+      waveSel1_2 = 1;  
+
+      averages_loop:
+      //等待触发信号      
+      WaitTrigger(); 
+      
+      if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *BatchSlices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+      
+      view_av = 0;  
+      view_av_cnt =0;         
+      view_block_loop:
+      
+      discard_loop:
+      current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + BatchSlices;
+        slice_cnt = 0;  
+        
+      multislice_loop:
+      slice_av = 0;
+        
+      slice_block_loop:
+      	
+      scaleRamGpAddr = scan_cnt;
+      scaleRamGprAddr = scan_cnt;
+      
+      if(disacq_cnt <= no_disacq ){
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*disacq_cnt + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;   
+      }
+         else{
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*no_disacq + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;
+      }	
+      	
+      ps_cnt = 0;  
+         
+      if(NumPs > 0)
+      {
+         multips_loop://预饱和循环
+         Delay_ps = delayTime1 + trampTime + tselps + tbefPs +tSpoilS+ tps*ps_cnt ;//+ sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+         TimerCmp(Delay_ps,US); 
+         TrapezoidOneFixTrampTimeStart( waveSel1_1, waveSel1_2, tSpoilPs, trampTime, GspoilPs);
+
+         ps_cnt = ps_cnt + 1;
+         if(ps_cnt < NumPs)   
+            goto  multips_loop;                  
+      }
+        
+      delayTime2 = delayTime1 + tps*NumPs + tRstartDelay + trampTime*2.0 + tsel90 + tbef90;// + sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+      delayTime3 = delayTime1 + tps*NumPs + trampTime +  tbef90 + tsel90*0.5 + TE + afterTacq ;//+ sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+
+      //---------------查表---------
+      TimerCmp(delayTime2,US); 
+      if(gp_on==1)
+       TrapelutzoidOneFixTrampTimeStart( waveSel1_1, waveSel1_2, tGp, trampTime, scaleRamGpAddr);
+      else
+       TrapezoidOneFixTrampTimeStart( waveSel1_1, waveSel1_2, tGp, trampTime, 0);
+         
+      TimerCmp(delayTime3,US); 
+      if(gp_on==1)
+       TrapelutzoidOneFixTrampTimeStart( waveSel1_2, waveSel1_1, tGpr, trampTime, scaleRamGprAddr);
+      else
+       TrapezoidOneFixTrampTimeStart( waveSel1_1, waveSel1_2, tGp, trampTime, 0);
+         
+      slice_av = slice_av + 1;                                                                                    
+      if( slice_av < SliceBlock )                    
+         goto slice_block_loop;//最内层的循环，其他条件均不变的平均次数。
+         
+      current_slice = current_slice + 1;
+      slice_cnt = slice_cnt +1;
+      if (current_slice < slice_num)                  
+         goto multislice_loop;//当前TR下的层数累计。
+         
+      disacq_cnt = disacq_cnt + 1;      
+      if ( disacq_cnt <= no_disacq )
+         goto discard_loop;
+           
+      view_av = view_av + SliceBlock;
+      view_av_cnt = view_av_cnt + 1;
+      if (view_av < noViewBlock)  //相位编码的平均次数                     
+         goto view_block_loop;
+      else
+         view_av_num = view_av_cnt;  
+
+       scan_cnt = scan_cnt + 1;
+      goto averages_loop;
+   }  
+ 
+   tx1:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double delayTime1;
+      double delayTime_rf90;
+      double ps_cnt = 0.0;
+      double ttxgatepost = 10.0;                
+      double ttxgatepre = 10.0;
+      double tPsoffsetPhase=0;
+      double Delay_ps; 
+      double noSlice=0.0;  
+      double tps;
+      double current_slice;
+      double slice_av;
+      double view_av; 
+      double disacq_cnt = 0;
+      double scan_cnt = 0;
+      double current_batch_slice =0;
+      double slice_cnt;
+      double slice_num =0;
+      double view_av_cnt;
+      double view_av_num = 1; 
+      double RfSpoilCnt =0;
+
+ //     TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay;
+      if(tSpoilPs > tSpoilPsS)
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPs ;
+      else
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPsS ;
+      
+      tx_start:      
+      //等待触发信号      
+      WaitTrigger(); 
+      if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *BatchSlices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+      
+      view_av = 0;  
+      view_av_cnt =0;         
+      view_block_loop:
+      
+      discard_loop:
+      current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + BatchSlices;
+        slice_cnt = 0;  
+        
+      multislice_loop:
+      slice_av = 0;
+        
+      slice_block_loop:
+      
+      if(disacq_cnt <= no_disacq ){
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*disacq_cnt + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;   
+      }
+         else{
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*no_disacq + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;
+      }		
+      
+      ps_cnt = 0;  
+         
+      if(NumPs > 0)
+      {
+         multips_loop://预饱和循环
+         Delay_ps = delayTime1 + trampTime +  tbefPs + tps*ps_cnt ;//+ sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+         
+         TxChannelShapeSel(CHANNEL1,tPs_Shape_NO);
+         TxFreqOffsetRam(CHANNEL1,ps_cnt); 
+         TxPhaseOffsetReg(CHANNEL1,tPsoffsetPhase);
+         TxAttReg(CHANNEL1,rfpsScale);         
+         TimerCmp(Delay_ps,US);
+         TxStart(CHANNEL1, tselps, ttxgatepre, ttxgatepost);
+            
+         ps_cnt = ps_cnt + 1;
+            
+         if(ps_cnt < NumPs)   
+            goto  multips_loop;                  
+      }
+         
+      //脉冲延迟时间
+      delayTime_rf90 = delayTime1 + tps*NumPs  + tbef90 + trampTime ;//+ sepeceSliceTime*slice_av*current_slice*disacq_cnt_tmp*view_av_tmp;
+      TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+      if(rfsp_on==1)
+      	TxPhaseOffsetRam(CHANNEL1,RfSpoilCnt); 
+      else
+      	TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);
+      TxFreqOffsetRam(CHANNEL1,current_slice);     
+      TxAttReg(CHANNEL1,rf90Scale);
+      TimerCmp(delayTime_rf90,US);
+      TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+      
+      RfSpoilCnt = RfSpoilCnt +1 ;
+      if(RfSpoilCnt > MAX_SPOIL)
+      	RfSpoilCnt = 0;
+
+      slice_av = slice_av + 1;                                                                                    
+      if( slice_av < SliceBlock )                    
+         goto slice_block_loop;//最内层的循环，其他条件均不变的平均次数。
+        
+      current_slice = current_slice + 1;
+      slice_cnt = slice_cnt +1;
+      if (current_slice < slice_num)                  
+         goto multislice_loop;//当前TR下的层数累计。
+         
+      disacq_cnt = disacq_cnt + 1;      
+      if ( disacq_cnt <= no_disacq )
+         goto discard_loop;
+            
+      view_av = view_av + SliceBlock;
+      view_av_cnt = view_av_cnt + 1;
+      if (view_av < noViewBlock){
+                         
+         goto view_block_loop;
+      }
+      else{
+         view_av_num = view_av_cnt;  
+      }
+    
+      goto tx_start;
+   }
+
+   rx1:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double sample_period;
+      double delayTime1;
+      double delayTime2;
+      double sample_total;
+      double preTacq;
+      double noPreEffSample;
+      double trxgatepre = 10.0;                 
+      double trxgatepost = 10.0;   
+      double tps;
+      double current_slice;
+      double slice_av;
+      double view_av; 
+      double disacq_cnt = 0;
+      double scan_cnt = 0;
+      double current_batch_slice =0;
+      double slice_cnt;
+      double slice_num =0;
+      double view_av_cnt;
+      double view_av_num = 1; 
+      double echoes;
+      
+      rx_start:
+      //配置通道1-4的频率和相位偏移
+      RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);       
+      RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data);     
+      RxFreqOffsetReg(CHANNEL3,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL3,rx_ph_offset_data);     
+      RxFreqOffsetReg(CHANNEL4,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL4,rx_ph_offset_data);  
+      //回波的采样点数
+      sample_total =preDiscard + noSamples;
+      //回波的采样时间
+      sample_period=RxChannelAcquirePara(samplePeriod,sample_total);
+      //配置通道1-4的增益
+      RxGainReg(CHANNEL1,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL2,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL3,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL4,rxGain);  //ch, db att  
+      //梯度爬升时间 
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_FILTER_DELAY - trxgatepre + UnifiedTDelay;
+      if(tSpoilPs > tSpoilPsS)
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPs ;
+      else
+       tps = trampTime*3.0 + tselps +tbefPs+ tSpoilS + tSpoilPsS ;
+      noPreEffSample = (noSamples - partialFreqSampling)*0.5 + preDiscard;
+      preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+
+      //等待触发信号      
+      WaitTrigger(); 
+      if(scan_cnt == noScans) {
+         disacq_cnt = 0;
+         scan_cnt =0 ;
+        }
+        current_batch_slice =current_batch_slice + GradEnScanCnt( noScans) *BatchSlices; 
+        if(current_batch_slice < noSliceBlock)
+          current_batch_slice = current_batch_slice ;
+        else
+          current_batch_slice = 0;
+      
+      view_av = 0;  
+      view_av_cnt =0;         
+      view_block_loop:
+      
+      discard_loop:
+      current_slice=current_batch_slice; 
+        slice_num = current_batch_slice + BatchSlices;
+        slice_cnt = 0;  
+        
+      multislice_loop:
+      slice_av = 0;
+
+      //多层循环结构
+      slice_block_loop:
+      	
+      if(disacq_cnt <= no_disacq ){
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*disacq_cnt + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;   
+      }
+         else{
+          delayTime1 = fixDelayTime +sepeceSliceTime*slice_av + sepeceSliceTime*SliceBlock*slice_cnt + sepeceSliceTime*SliceBlock*BatchSlices*no_disacq + sepeceSliceTime*SliceBlock*BatchSlices*view_av_cnt;
+      }	
+      
+      //回波采集延迟时间
+      delayTime2 = delayTime1 + tps*NumPs + tbef90 + trampTime + tsel90*0.5 + TE - preTacq ;
+      //开始采集数据 
+      TimerCmp(delayTime2,US);      
+      if(disacq_cnt < no_disacq){
+        	RxStart(0,trxgatepre,trxgatepost,sample_period);
+        }else{
+        	RxStart(15,trxgatepre,trxgatepost,sample_period);
+        }
+        echoes = noEchoes;
+
+      slice_av = slice_av + 1;                                                                                    
+      if( slice_av < SliceBlock )                    
+         goto slice_block_loop;//最内层的循环，其他条件均不变的平均次数。
+         
+      current_slice = current_slice + 1;
+      slice_cnt = slice_cnt +1;
+      if (current_slice < slice_num)                  
+         goto multislice_loop;//当前TR下的层数累计。
+         
+      disacq_cnt = disacq_cnt + 1;      
+      if ( disacq_cnt <= no_disacq )
+         goto discard_loop;
+           
+      view_av = view_av + SliceBlock;
+      view_av_cnt = view_av_cnt + 1;
+      if (view_av < noViewBlock)  //相位编码的平均次数                     
+         goto view_block_loop;
+      else
+         view_av_num = view_av_cnt;  
+         
+      goto rx_start;
+   }
+
+   
+
+}
+      

@@ -1,0 +1,311 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    pre_adj.src                                            
+Author           :    firtech                                            
+Contacts         :                                                
+Date             :    2017.01.06                                            
+File version     :                                                
+Key words        :                                                
+File discription :    pre_adj序列代码编写                                            
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+        
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"
+#include "grad.h"
+#include "tx.h"
+#include "rx.h"
+#include "mainctrl.h"
+
+/*-----------------------------------------------------
+ 全局变量定义，此处定义的变量序列中使用到的会在
+ 菲特谱仪设备管理软件的Load Runnable Config界面中
+ 显示。变量可以在序列或者Load Runnable Config修改
+------------------------------------------------------*/
+double noEchoes = 10.0;
+double noScans = 2048;
+double noAverages = 1.0;
+double noSliceBlock = 1.0;
+double no_View_Block = 256.0;
+double samplePeriod = 20.0;
+double noSamples = 2048.0;
+double TR = 500.0;
+double TE = 5000.0;
+double tsel90 = 1000.0;//
+double rf90Scale=10.0;
+double tx_ph_offset_data = 0.0;
+double tx_freq_offset_data =0.0;
+double rxGain = 0.5;
+double trxgatepost = 10.0;
+double trxgatepre = 10.0;
+double rx_freq_offset_data = 0.0;
+double rx_ph_offset_data = 0.0;
+double GMAX = 0.0;
+
+double sepeceSliceTime = 40000.0;
+double preDiscard = 2.0;
+double gradMatrixSel = 1.0;
+double gradWavePoint = 500.0;
+double gradSamplePeriod = 1.0;//
+
+double graddelay = 1000.0;//1,2.5, 5, 10, 25, 50, 100, 250, 500, 2000ms
+
+double S_Gradient = 1 ;//1.0:on;0.0:off
+double P_Gradient = 0 ;//1.0:on;0.0:off
+double R_Gradient = 0 ;//1.0:on;0.0:off
+double Tplat = 1000.0;//
+double gradGain = 200.0;//
+double Trdd = 80.0;
+double Delay_Test = 1000;
+double sepeceEchoTime = 40000.0;
+
+void main()
+{
+	 MainctrlTrigger(noAverages,noScans,TR);
+	 
+	 /*-----------------------------------------------------   
+ 选层梯度模块                    
+------------------------------------------------------*/ 	
+  gradS:
+  	{
+  	 
+  	  double trampTime;
+		  double fixDelayTime;
+		  double holdTime1;
+		  double delayTime1;
+		  double rep_cnt = 0.0;
+		  int waveSel1_1;
+		  int waveSel1_2;
+		  double gradGain1;
+      
+      GradMatSel(gradMatrixSel);//选择旋转矩阵，只在slice中使用
+		  trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_RF_FIS_GRA_SEC_DELAY;
+      
+		  averages_loop:
+      
+		  gradGain1 = gradGain;//rf90Bandwidth/(thickSlice*thickSliceRatioGain);
+      
+		  holdTime1 = Tplat;
+      
+		  waveSel1_1 = 0;
+		  waveSel1_2 = 1;
+      
+		  rep_cnt = 0.0;
+		  WaitTrigger();
+      
+		  slice_loop:
+      
+		  delayTime1 = fixDelayTime + sepeceSliceTime*rep_cnt;
+		  if(S_Gradient==1.0)
+    {
+		  TimerCmp(delayTime1,US);
+      
+		  TrapezoidOneFixTrampTimeStart(waveSel1_1, waveSel1_2, holdTime1, trampTime, gradGain1);
+    }
+		  rep_cnt = rep_cnt + 1.0;
+		  if(rep_cnt < noSliceBlock )
+		  	goto slice_loop;
+      
+		  goto averages_loop;
+		 
+  		
+  	}
+  	
+/*-----------------------------------------------------   
+ 读出梯度模块                    
+------------------------------------------------------*/ 	
+  gradR:
+  	{
+  	 
+  	  double trampTime;
+		  double fixDelayTime;
+		  double holdTime1;
+		  double delayTime1;
+		  double rep_cnt = 0.0;
+		  int waveSel1_1;
+		  int waveSel1_2;
+		  double gradGain1;
+      
+		  trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_RF_FIS_GRA_SEC_DELAY;
+      
+		  averages_loop:
+      
+		  gradGain1 = gradGain;//rf90Bandwidth/(thickSlice*thickSliceRatioGain);
+      
+		  holdTime1 = Tplat;
+      
+		  waveSel1_1 = 0;
+		  waveSel1_2 = 1;
+      
+		  rep_cnt = 0.0;
+		  WaitTrigger();
+      
+		  slice_loop:
+      
+		  delayTime1 = fixDelayTime + sepeceSliceTime*rep_cnt;
+		  if(R_Gradient==1)
+    {
+		  TimerCmp(delayTime1,US);
+      
+		  TrapezoidOneFixTrampTimeStart(waveSel1_1, waveSel1_2, holdTime1, trampTime, gradGain1);
+    }
+		  rep_cnt = rep_cnt + 1.0;
+		  if(rep_cnt < noSliceBlock )
+		  	goto slice_loop;
+      
+		  goto averages_loop;
+		 
+  		
+  	}
+  	
+/*-----------------------------------------------------   
+ 相位编码梯度模块                    
+------------------------------------------------------*/ 	
+  gradP:
+  	{
+  	 
+  	  double trampTime;
+		  double fixDelayTime;
+		  double holdTime1;
+		  double delayTime1;
+		  double rep_cnt = 0;
+		  int waveSel1_1;
+		  int waveSel1_2;
+		  double gradGain1;
+      
+		  trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_RF_FIS_GRA_SEC_DELAY;
+      
+		  averages_loop:
+      
+		  gradGain1 = gradGain;//rf90Bandwidth/(thickSlice*thickSliceRatioGain);
+      
+		  holdTime1 = Tplat;
+      
+		  waveSel1_1 = 0;
+		  waveSel1_2 = 1;
+      
+		  rep_cnt = 0.0;
+		  WaitTrigger();
+      
+		  slice_loop:
+      
+		  delayTime1 = fixDelayTime + sepeceSliceTime*rep_cnt;
+		  if(P_Gradient==1)
+    {
+		  TimerCmp(delayTime1,US);
+      
+		  TrapezoidOneFixTrampTimeStart(waveSel1_1, waveSel1_2, holdTime1, trampTime, gradGain1);
+    }
+		  rep_cnt = rep_cnt + 1.0;
+		  if(rep_cnt < noSliceBlock )
+		  	goto slice_loop;
+      
+		  goto averages_loop;
+		 
+     
+  		
+  	}
+  	
+  tx1:
+  	{
+  	 double trampTime;
+		 double fixDelayTime;
+		 double delayTime_rf90_1;
+		 double rep_cnt = 0.0;
+		 double rep_cnt1;
+		 double ttxgatepost = 10.0;
+		 double ttxgatepre = 10.0;
+		 double noSlice = 0.0;
+		 double tx_freq_offset_data_tmp;
+		 double totalsample;
+		 double Tacq;
+
+    
+		 tx_start:
+		 TxFirReset();
+
+		 TxHardPulseShape(CHANNEL1,tsel90);
+		 TxFreqOffsetReg(CHANNEL1,tx_freq_offset_data,KHZ);  //设置发射脉冲频偏
+		 TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);       //设置发射脉冲相偏
+		 TxAttReg(CHANNEL1,rf90Scale);//ch,att db 
+		 
+		 trampTime = gradWavePoint * gradSamplePeriod; 
+		 totalsample = preDiscard + noSamples;
+     Tacq = AcquireDuration(samplePeriod,totalsample);
+		 WaitTrigger();
+		 rep_cnt = 0.0;
+		 slice_loop:
+       fixDelayTime = 0.0;
+		 delayTime_rf90_1 = fixDelayTime +trampTime*2.0 + Tplat+graddelay + sepeceSliceTime*rep_cnt;
+		 rep_cnt1 = 0.0;
+		 echo_loop:
+       delayTime_rf90_1 = delayTime_rf90_1 + sepeceEchoTime*rep_cnt1;
+		 TimerCmp(delayTime_rf90_1,US);
+		 TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+	//	 delayTime_rf90_1 =  delayTime_rf90_1 + graddelay + tsel90 + Trdd + Tacq + Delay_Test;
+		 rep_cnt1 = rep_cnt1 + 1.0;
+		 if(rep_cnt1 < noEchoes)
+		 	goto echo_loop;
+		 rep_cnt = rep_cnt + 1.0;
+     if(rep_cnt < noSliceBlock )
+      goto slice_loop;
+
+		 goto tx_start;
+  	}
+  	
+  rx1:
+	 {
+		double trampTime;
+		double fixDelayTime;
+		double sample_period;
+		double delayTime_1;
+		double delayTime_c1;
+		double rep_cnt = 0.0;
+		double rep_cnt1;
+		double trxgatepre = 10.0;
+		double trxgatepost = 10.0;
+		double Tacq;
+    double totalsample;
+		
+
+		rx_start:
+
+		RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+		RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);
+
+		RxGainReg(CHANNEL1,rxGain);  //ch, db att
+    totalsample = preDiscard + noSamples;
+    Tacq = RxChannelAcquirePara(samplePeriod,totalsample);
+
+		trampTime = gradWavePoint * gradSamplePeriod;
+		fixDelayTime = TX_FILTER_DELAY - trxgatepre;
+
+		WaitTrigger();
+		rep_cnt = 0.0;
+
+		slice_loop:
+		delayTime_c1 = fixDelayTime + Tplat + trampTime * 2 + tsel90 + graddelay + Trdd + sepeceSliceTime*rep_cnt;
+    rep_cnt1=0.0;
+    echo_loop:
+      delayTime_c1=delayTime_c1+ sepeceEchoTime*rep_cnt1;
+		TimerCmp(delayTime_c1,US);
+		RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+	//	delayTime_c1 = delayTime_c1 + tsel90 + graddelay + Trdd +Tacq + Delay_Test;
+		rep_cnt1 = rep_cnt1 + 1.0;
+		if(rep_cnt1<noEchoes)
+			goto echo_loop;
+
+		rep_cnt = rep_cnt + 1.0;
+		if(rep_cnt < noSliceBlock )
+			goto slice_loop;
+
+		goto rx_start;
+	}
+}

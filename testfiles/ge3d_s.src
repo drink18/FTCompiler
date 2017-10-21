@@ -1,0 +1,579 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    gesd_s.src                                            
+Author           :    pengjing                                            
+Contacts         :                                                
+Date             :    2016.12.30                                            
+File version     :                                                
+Key words        :                                                
+File discription :                                                
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+2016.12.30   pengjing           v1.0         
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1.0;                         
+double noScans  = 16.0;  
+double noAverages = 1.0;     
+double noViewsSec = 4.0;                
+double noSliceBlock = 1.0;                       
+double noSamples =256.0; 
+double samplePeriod=30.0; 
+double effectiveEcho = 1.0;
+double fovSlice = 200.0; 
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double TR = 500.0;//ms        
+double TE = 30000.0;//us
+double TE2 = 45000.0;//us
+double distanceSlice1 = 0.0;
+double thickSlice = 5.0;
+double seperationSlice = 10.0;
+double orderSlice = 1.0;
+double ratioPhaseSampling = 1.0;
+double ratioFreqSampling = 1.0;
+double partialFreqSampling = 0.0;
+double partialPhaseSampling = 0.0;
+double modeAverage = 0.0;
+double phaseCycle = 0.0;
+double fovPhaseOffset = 0.0;
+double fovReadOffset = 0.0;
+double dummyShot = 0.0;
+double modePhaseCode = 1.0;
+double orderPhaseCode = 1.0;
+double modePartialPhaseSampling = 0.0;
+double flow_comp_on = 1.0;
+double inOppPhOn = 1.0;
+
+int rf_Shape_NO =0;    
+int mtc_Shape_NO = 1;      
+int sat_Shape_NO = 2;             
+double tselrf =2560.0; //us 
+double rfBandwidth = 960.0;               
+double rfScale=12.5;      
+double gradWavePoint = 500.0;             
+double gradSamplePeriod = 1.0;//us                
+double rxGain = 0.0;//db                  
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//0??                      
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//0?? 
+double preDiscard = 2.0;
+
+double thickSliceRatioGain = 1.32;
+double gradMatrixSel = 0;
+double sepeceSliceTime = 40000.0; // TR/noSliceBlock > sepeceSliceTime >TE * noEchos 
+
+double mtcOn = 1.0;
+double tselmtc = 2560.0;//
+double mtcScale = 10.0;//db
+double mtcTcrush = 1000.0;//us
+double mtcGrAmp = 100.0;
+double mtcDelay = 10.0;//MS
+double mtcoffsetFreq = 0.0;//KHZ
+double mtcoffsetPhase = 0.0;//
+
+double satgsOn = 1.0;//pre-saturation bands 
+double satOrient = 1.0;// Pre-Sat. Orientation 1 slice 2 phase 3 read
+double pSatBandwidth = 960.0;
+double tselSat = 2560.0;//
+double pSatScale = 0.0;//Pre-Sat. Scale Factor  db
+double satTcrush = 1000.0;//Pre-Sat. Crusher Duration
+double satGrAmp = 100.0;//Pre-Sat. Crusher Amplitude
+double satFovScale = 250.0;//Pre-Sat. FOV Scale
+double satoffsetFreq = 0.0;//KHZ
+double satoffsetPhase = 0.0;//
+
+double gainEffPhase = 300.0;
+double preGradSTime = 0.0; //the time of gradslice before 90RF
+double preGradRTime = 0.0; //the time of gradRead before sample
+double ratiaFreqOversampling = 1.0;
+double gradCompensation = 0.0; //the Trapezoid gain after sample
+double tref = 1500.0;
+double UnifiedTDelay = 50.0;//Unified time delay(US)
+
+double dummyn1 =0.0; 
+double dummyn2 =0.0; 
+double dummyn3 =0.0; 
+double dummyn4 =0.0; 
+double dummyn5 =0.0; 
+double dummyn6 =0.0; 
+double dummyn7 =0.0; 
+double dummyn8 =0.0; 
+double dummyn9 =0.0; 
+double dummyn10=0.0; 
+double dummyn11=0.0; 
+double dummyn12=0.0; 
+double dummyn13=0.0; 
+double dummyn14=0.0; 
+double dummyn15=0.0; 
+double dummyn16=0.0; 
+double dummyn17=0.0; 
+double dummyn18=0.0; 
+double dummyn19=0.0; 
+double dummyn20=0.0; 
+             
+void main()
+{
+    double no_Tr;
+	no_Tr = noViewsSec*noScans;
+    MainctrlTrigger( noAverages, no_Tr, TR);
+
+    gradS:
+    {
+
+        double trampTime;
+        double fixDelayTime;
+        double t_comp;
+	    double t_flow;
+        double delayTime1;
+		double delayTime_mtc;
+		double delayTime_sat;
+	    double gs_var;
+		double gs_sat;
+		double gp_sl_var;
+		double gp_sl_inc;
+        double gs_comp; 
+        double rep_cnt;
+		static double echoBlockCnt = 0.0;
+		static double slicegrad = 1;
+        int waveSel1_1;
+        int waveSel1_2;
+       
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime =  UnifiedTDelay;
+	   
+        averages_loop: 	
+        GradMatSel(gradMatrixSel);
+	    
+		gp_sl_inc = GardSliceGain(rfBandwidth,fovSlice,1.0);		
+		if(echoBlockCnt==noScans)
+     	   echoBlockCnt = 0;
+        if(echoBlockCnt==0.0)
+        	slicegrad = slicegrad-1/(noViewsSec*0.5);
+         
+        gp_sl_var = slicegrad*gp_sl_inc;
+
+        echoBlockCnt =echoBlockCnt+1;
+		
+        gs_var = GardSliceGain(rfBandwidth,thickSlice,thickSliceRatioGain);
+		t_comp = tref;
+		gs_comp = 0.5*gs_var*(tselrf+trampTime)/(t_comp+trampTime);
+	    if(flow_comp_on==1.0)
+	    {
+		    t_comp = 2*tref;
+		    t_flow = tselrf/2;
+			gs_comp = gs_var*(tselrf +trampTime*1.5)/(t_comp+trampTime);
+	    }	     
+	    gs_comp =  gs_comp + gp_sl_var*(trampTime+tselrf)/(t_comp+trampTime);
+		
+		if(satgsOn==1.0)
+		{
+			if(satOrient==1.0)
+			{
+			   gs_sat = pSatBandwidth*gs_var/((noSliceBlock-1)*seperationSlice+rfBandwidth);
+			}
+		}
+		
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;
+       
+        rep_cnt = 0.0;      
+        WaitTrigger(); 
+
+        slice_loop:
+		delayTime_mtc = fixDelayTime +tselmtc+ sepeceSliceTime*rep_cnt;
+		delayTime_sat = fixDelayTime + mtcOn*(tselmtc*0.5 + mtcDelay*1000.0- tselSat*0.5 -trampTime)+ sepeceSliceTime*rep_cnt;
+		
+		if(mtcOn==1.0){
+		  if(satgsOn==1.0)
+		    delayTime1 = fixDelayTime + tselmtc*0.5 + mtcDelay*1000.0 + tselSat*0.5 +satTcrush + 3.0*trampTime + 200.0 + sepeceSliceTime*rep_cnt;		
+		  else
+		    delayTime1 = fixDelayTime + tselmtc*0.5 + mtcDelay*1000.0 - tselrf*0.5 -trampTime + sepeceSliceTime*rep_cnt; 
+		}else{
+		  if(satgsOn==1.0)
+		    delayTime1 = fixDelayTime + tselSat + satTcrush + 4.0*trampTime + 200.0 + sepeceSliceTime*rep_cnt;		
+		  else
+		    delayTime1 = fixDelayTime + sepeceSliceTime*rep_cnt; 		
+		}
+		if(mtcOn==1.0){
+		TimerCmp(delayTime_mtc,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,mtcTcrush,trampTime,mtcGrAmp);  
+		}
+
+		if(satgsOn==1.0)
+		if(satOrient==1.0){
+		TimerCmp(delayTime_sat,US); 
+        TrapezoidTwoFixTrampTimeStart( waveSel1_1,waveSel1_1,waveSel1_2,waveSel1_2,\
+                                       tselSat, satTcrush, 0.0, trampTime,gs_sat, gs_sat);	  
+		}
+ 	    if(flow_comp_on==0.0)
+	    {
+	   	    TimerCmp(delayTime1,US); 
+            TrapezoidTwoFixTrampTimeStart( waveSel1_1,waveSel1_2,waveSel1_2,waveSel1_1,\
+                                          tselrf, 0.0, t_comp, trampTime,gs_var, gs_comp);						
+	    }else
+	    {
+	   	    TimerCmp(delayTime1,US); 
+            TrapezoidThreeFixTrampTimeStart( waveSel1_1,waveSel1_2,waveSel1_2,waveSel1_1, waveSel1_1,waveSel1_2,\
+                                             tselrf, 0.0, t_comp, 0.0, t_flow,trampTime,gs_var,gs_comp,gs_var);		
+	    }
+ 
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop; 
+          
+        goto averages_loop;
+    }
+       
+    gradR:
+    {
+       
+        double trampTime;
+        double fixDelayTime;
+        double t_comp;
+        double delayTime1; 		
+        double delayTime2; 
+		double delayTime3;
+		double delayTime_mtc;
+		double delayTime_sat;
+        double gr_var;
+		double gs_sat;
+        double gr_comp;	
+        double preTacq;
+        double tacq;
+        double totalsample;
+        double noPreEffSample ;
+		double rep_cnt;
+        int waveSel1_1;
+        int waveSel1_2;
+		
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime =   UnifiedTDelay;
+		
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5 ;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        totalsample = preDiscard +  noSamples;
+        tacq = AcquireDuration(samplePeriod,totalsample);
+      
+        gr_var = GardReadGain( samplePeriod, fovRead, ratiaFreqOversampling);
+		t_comp = tref;
+		gr_comp = gr_var*(preTacq+trampTime*0.5)/(tref+trampTime);
+		if(flow_comp_on==1.0)
+		{
+		    t_comp = tref*2;
+		    gr_comp = gr_var*(tref + preTacq + trampTime*1.5)/(t_comp+trampTime);
+		}
+		if(satgsOn==1.0)
+		{
+			if(satOrient==3.0)
+			{
+			   gs_sat = pSatBandwidth*gr_var*samplePeriod/1000000.0;
+			}
+		}   		
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;
+      
+        averages_loop:
+        
+        rep_cnt = 0.0;       
+        WaitTrigger();       
+        slice_loop:  
+		delayTime_mtc = fixDelayTime+tselmtc+ sepeceSliceTime*rep_cnt;
+		delayTime_sat = fixDelayTime + mtcOn*(tselmtc*0.5 + mtcDelay*1000.0- tselSat*0.5 -trampTime)+ sepeceSliceTime*rep_cnt;		
+		if(mtcOn==1.0){
+		  if(satgsOn==1.0)
+		  {
+            delayTime1 = fixDelayTime +tselmtc*0.5 + mtcDelay*1000.0+ tselrf + tselSat*0.5 +satTcrush + 5.0*trampTime + 200.0 +sepeceSliceTime*rep_cnt;  	
+            delayTime2 = fixDelayTime +tselmtc*0.5 + mtcDelay*1000.0+ tselrf*0.5 + tselSat*0.5 +satTcrush + 1.0*trampTime + 200.0 + TE -preTacq-t_comp +sepeceSliceTime*rep_cnt; 
+		  }else{
+		    delayTime1 = fixDelayTime +tselmtc*0.5 + mtcDelay*1000.0+ tselrf*0.5 + 1*trampTime+sepeceSliceTime*rep_cnt;  	
+            delayTime2 = fixDelayTime +tselmtc*0.5 + mtcDelay*1000.0+ TE -preTacq-t_comp-3*trampTime+sepeceSliceTime*rep_cnt; 
+		  }
+		}else{		
+		  if(satgsOn==1.0)
+		  {			
+		    delayTime1 = fixDelayTime + tselSat +satTcrush + 6.0*trampTime + 200.0 + tselrf +sepeceSliceTime*rep_cnt;  	
+            delayTime2 = fixDelayTime + tselSat +satTcrush + 2.0*trampTime + 200.0 + TE + tselrf*0.5-preTacq- t_comp +sepeceSliceTime*rep_cnt;     
+		  }else{
+		    delayTime1 = fixDelayTime + tselrf + 2*trampTime+sepeceSliceTime*rep_cnt;  	
+            delayTime2 = fixDelayTime + TE + tselrf*0.5-preTacq-t_comp-2*trampTime+sepeceSliceTime*rep_cnt;  
+          }			
+		}
+		
+		delayTime3 = delayTime2 -TE + TE2+t_comp+2*trampTime;
+		
+	    if(mtcOn==1.0){
+		TimerCmp(delayTime_mtc,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,mtcTcrush,trampTime,mtcGrAmp);  
+		}
+		if(satgsOn==1.0)
+		if(satOrient==3.0){
+		TimerCmp(delayTime_sat,US); 
+        TrapezoidTwoFixTrampTimeStart( waveSel1_1,waveSel1_1,waveSel1_2,waveSel1_2,\
+                                       tselSat, satTcrush, 0.0, trampTime,gs_sat, gs_sat);	
+		}							   
+		if(flow_comp_on==0.0)
+	    {	       
+	   	    TimerCmp(delayTime2 ,US);
+            TrapezoidTwoFixTrampTimeStart( waveSel1_2,waveSel1_1,waveSel1_1,waveSel1_2,\
+                                           tref, 0.0, tacq, trampTime,gr_comp, gr_var);
+	    }else{
+		    TimerCmp(delayTime1 ,US);
+            TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tref,trampTime,gr_var);
+			TimerCmp(delayTime2 ,US);			
+            TrapezoidTwoFixTrampTimeStart( waveSel1_2,waveSel1_1,waveSel1_1,waveSel1_2,\
+                                           t_comp, 0.0, tacq, trampTime,gr_comp, gr_var);			
+		}        
+        if(inOppPhOn ==1.0){
+		    TimerCmp(delayTime3 ,US);
+            TrapezoidOneFixTrampTimeStart( waveSel1_2,waveSel1_1,tacq,trampTime,gr_var);  
+        }          
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop; 
+          
+        goto averages_loop; 
+    }
+
+
+    gradP:
+    {
+       
+        double trampTime;
+        double fixDelayTime;
+        double holdTime1;
+        double delayTime1;
+		double delayTime_mtc;
+		double delayTime_sat;		
+        double rep_cnt;
+        double gp_var;
+		double gs_sat;
+		double gr_var;
+		double gp_var_rescale;
+		double noPreEffSample;
+		double preTacq;
+        double dummyShotEnout;
+        static double echoBlockCnt = 0.0;
+        int waveSel1_1;
+        int waveSel1_2;
+		
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime =  UnifiedTDelay;
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5 ;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+		
+        holdTime1 = GardPhaseTime( fovPhase, gainEffPhase, noScans , noEchoes,  dummyShot, trampTime);
+		gp_var_rescale = gainEffPhase*(holdTime1+trampTime)/(tref+trampTime);
+		if(satgsOn==1.0)
+		{
+			if(satOrient==2.0)
+			{
+			   gr_var = GardReadGain( samplePeriod, fovRead, ratiaFreqOversampling);
+			   gs_sat = pSatBandwidth*gr_var*samplePeriod/1000000.0;
+			}
+		} 
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;  
+        averages_loop:
+        rep_cnt = 0.0;       
+        WaitTrigger(); 
+    
+        dummyShotEnout = DummyShotEn(dummyShot, noAverages,dummyn1, dummyn2, dummyn3, dummyn4,\
+                                   dummyn5, dummyn6, dummyn7, dummyn8, dummyn9, dummyn10,\
+                                   dummyn11, dummyn12, dummyn13, dummyn14, dummyn15,\
+                                   dummyn16, dummyn17, dummyn18, dummyn19, dummyn20);
+        if(dummyShotEnout==0.0)
+             echoBlockCnt = Grad3DEnScanCnt( noAverages,noScans);
+               
+        slice_loop:
+		delayTime_mtc = fixDelayTime+tselmtc+sepeceSliceTime*rep_cnt;
+		delayTime_sat = fixDelayTime + mtcOn*(tselmtc*0.5 + mtcDelay*1000.0- tselSat*0.5 -trampTime)+ sepeceSliceTime*rep_cnt;
+		if(mtcOn==1.0){
+		  if(satgsOn==1.0)
+            delayTime1 = fixDelayTime + tselmtc*0.5 + mtcDelay*1000.0 + tselSat*0.5 +satTcrush + 1.0*trampTime + 200.0 +tselrf*0.5 + TE-preTacq - tref +sepeceSliceTime*rep_cnt;			
+		  else
+		    delayTime1 = fixDelayTime +tselmtc*0.5 + mtcDelay*1000.0 +TE-preTacq- tref-trampTime*3 +sepeceSliceTime*rep_cnt; 
+		}else{
+		  if(satgsOn==1.0)
+		    delayTime1 = fixDelayTime + tselSat +satTcrush + 2.0*trampTime + 200.0 + TE + tselrf*0.5-preTacq- tref +sepeceSliceTime*rep_cnt;  			
+		  else
+		    delayTime1 = fixDelayTime + TE+tselrf*0.5-preTacq- tref-trampTime*2 +sepeceSliceTime*rep_cnt;  		
+		}
+        if(dummyShotEnout==0.0)
+        gp_var = ModePhaseCodeGain( modePhaseCode, effectiveEcho, noScans, noEchoes,\
+		                               dummyShot,orderPhaseCode, modePartialPhaseSampling,\
+					                   partialPhaseSampling,echoBlockCnt, 1.0, gp_var_rescale);
+        else
+             gp_var = 0.0;
+        if(mtcOn==1.0){
+		TimerCmp(delayTime_mtc,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,mtcTcrush,trampTime,mtcGrAmp);    
+        }
+		if(satgsOn==1.0)
+		if(satOrient==2.0){
+		TimerCmp(delayTime_sat,US); 
+        TrapezoidTwoFixTrampTimeStart( waveSel1_1,waveSel1_1,waveSel1_2,waveSel1_2,\
+                                       tselSat, satTcrush, 0.0, trampTime,gs_sat, gs_sat);	
+		}							   
+        TimerCmp(delayTime1,US); 
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tref,trampTime,gp_var);         
+ 
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop; 
+          
+        goto averages_loop; 
+    }  
+ 
+    tx1:
+    {
+        double trampTime;
+        double fixDelayTime;
+        double delayTime_rf90_1; 
+        double delayTime_mtc; 
+		double delayTime_sat;		
+        double rep_cnt = 0.0;
+        double ttxgatepost = 10.0;                
+        double ttxgatepre = 10.0; 
+        double noSlice=0.0;     
+        
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+        tx_start:
+        TxFirReset(); 
+        WaitTrigger();
+
+        TxAvePhase( modeAverage,noAverages,tx_freq_offset_data, tx_ph_offset_data,KHZ, CHANNEL1);
+       
+        rep_cnt = 0.0;
+       
+        slice_loop:     
+        noSlice = TxSliceCount( orderSlice,  noSliceBlock, rep_cnt);
+      
+        TxFreqSet( orderSlice, distanceSlice1, seperationSlice,thickSlice,\
+                     noSlice, rfBandwidth, CHANNEL1,thickSliceRatioGain);
+ 
+        delayTime_mtc = fixDelayTime+sepeceSliceTime*rep_cnt;
+		delayTime_sat = fixDelayTime + mtcOn*(tselmtc*0.5 + mtcDelay*1000.0- tselSat*0.5 - trampTime)+trampTime+ sepeceSliceTime*rep_cnt;
+ 		if(mtcOn==1.0){
+		  if(satgsOn==1.0)
+			delayTime_rf90_1 = fixDelayTime+ tselmtc*0.5 + mtcDelay*1000.0+ tselSat*0.5 +satTcrush + 4.0*trampTime + 200.0+sepeceSliceTime*rep_cnt;	
+		  else
+		    delayTime_rf90_1 = fixDelayTime+ tselmtc*0.5 + mtcDelay*1000.0 - tselrf*0.5+sepeceSliceTime*rep_cnt; 
+		}else{
+		  if(satgsOn==1.0)
+		    delayTime_rf90_1 = fixDelayTime+ tselSat +satTcrush + 5.0*trampTime + 200.0+sepeceSliceTime*rep_cnt;			
+		  else
+		    delayTime_rf90_1 = fixDelayTime+trampTime+sepeceSliceTime*rep_cnt;  		
+		}       
+		if(mtcOn==1.0){
+		TxChannelShapeSel(CHANNEL1,mtc_Shape_NO);
+		TxFreqPhaseOffsetReg(CHANNEL1,mtcoffsetFreq,mtcoffsetPhase,KHZ);
+        TxAttReg(CHANNEL1,mtcScale);//ch,att db 
+        TimerCmp(delayTime_mtc,US);
+        TxStart(CHANNEL1,tselmtc,ttxgatepre,ttxgatepost);		
+        } 
+		if(satgsOn==1.0){
+		TxChannelShapeSel(CHANNEL1,sat_Shape_NO);
+		TxFreqPhaseOffsetReg(CHANNEL1,satoffsetFreq,satoffsetPhase,KHZ);
+        TxAttReg(CHANNEL1,pSatScale);//ch,att db 
+        TimerCmp(delayTime_sat,US);
+        TxStart(CHANNEL1,tselSat,ttxgatepre,ttxgatepost);	
+		}
+		TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+		TxPhaseCycle(CHANNEL1, phaseCycle, noAverages,rep_cnt);
+        TxAttReg(CHANNEL1,rfScale);//ch,att db 
+        TimerCmp(delayTime_rf90_1,US);
+        TxStart(CHANNEL1,tselrf,ttxgatepre,ttxgatepost);
+        
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop;
+    
+        goto tx_start;
+    }
+
+    rx1:
+    {
+        double trampTime;
+        double fixDelayTime;
+        double sample_period;
+        double delayTime_1; 
+        double delayTime_c1; 
+		double delayTime_mtc;
+		double delayTime_sat;		
+        double rep_cnt = 0.0;
+        double sample_total;
+        double preTacq;
+        double noPreEffSample;
+        double trxgatepre = 10.0;                 
+        double trxgatepost = 10.0; 
+
+        rx_start:
+      
+        RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);       
+        RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data);     
+        RxFreqOffsetReg(CHANNEL3,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL3,rx_ph_offset_data);     
+        RxFreqOffsetReg(CHANNEL4,rx_freq_offset_data,KHZ);
+        RxPhaseOffsetReg(CHANNEL4,rx_ph_offset_data);  
+        sample_total =preDiscard +  noSamples;
+        sample_period=RxChannelAcquirePara(samplePeriod,sample_total);
+        RxGainReg(CHANNEL1,rxGain);  //ch, db att  
+        RxGainReg(CHANNEL2,rxGain);  //ch, db att  
+        RxGainReg(CHANNEL3,rxGain);  //ch, db att  
+        RxGainReg(CHANNEL4,rxGain);  //ch, db att  
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = TX_FILTER_DELAY-trxgatepre + UnifiedTDelay;
+        noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        WaitTrigger();
+
+        rep_cnt = 0.0; 
+        slice_loop:
+		if(mtcOn==1.0){
+		  if(satgsOn==1.0)
+		    delayTime_c1 = fixDelayTime+tselmtc*0.5 + mtcDelay*1000.0 + tselSat*0.5 +satTcrush + 4.0*trampTime + 200.0+tselrf*0.5+TE-preTacq+sepeceSliceTime*rep_cnt; 
+		  else
+		    delayTime_c1 = fixDelayTime+tselmtc*0.5 + mtcDelay*1000.0 +TE-preTacq+sepeceSliceTime*rep_cnt; 
+		}else{
+		  if(satgsOn==1.0)
+		    delayTime_c1 = fixDelayTime+ tselSat +satTcrush + 5.0*trampTime + 200.0+TE-preTacq+tselrf*0.5+sepeceSliceTime*rep_cnt; 			
+		  else
+		    delayTime_c1 = fixDelayTime+TE-preTacq+tselrf*0.5 +trampTime+sepeceSliceTime*rep_cnt; 		
+		}    
+        delayTime_1 = delayTime_c1 - TE + TE2;
+
+        TimerCmp(delayTime_c1,US);
+        RxStart(15,trxgatepre,trxgatepost,sample_period);
+        if(inOppPhOn ==1.0){
+		    TimerCmp(delayTime_1 ,US);
+            RxStart(15,trxgatepre,trxgatepost,sample_period); 
+        }               
+        rep_cnt = rep_cnt + 1.0;
+        if(rep_cnt < noSliceBlock )
+        goto slice_loop;
+         
+        goto rx_start;
+    }
+
+}
+      
+
+
+
+
+
+

@@ -1,0 +1,327 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    fse_seq.src                                            
+Author           :    firtech                                            
+Contacts         :                                                
+Date             :    2016.11.30                                            
+File version     :                                                
+Key words        :                                                
+File discription :    FSE序列代码编写，发射一个90度软脉冲，七个180度软脉冲
+                      接收在一个Scan采集七个回波信号。添加选层、读出、相位编码梯度信号。                                               
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+      
+--------------------------------------------------------------------------------------------------*/
+
+import TX 0 11 "D:\\FT_mri_working\\firstech_lib_bak_0526\\wave\\Rect_lob3_1.333KHz_2us_1500_3000us.rfwave" Rect_lob3_1333Hz_2us_1500_3000us
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 9.0;                         
+double noScans  = 24;//32.0;  
+double noAverages = 1.0;                     
+double noSlices = 1.0;                       
+double noSamples =1024;//224;//256.0; 
+double samplePeriod=3.2;//30.0;//30.0;//40.0; 
+double effectiveEcho = 4.0; 
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double TR = 1000.0;//ms        
+double TE = 30000;//24000.0;//us
+double distanceSlice1 = 0.0;
+double thickSlice = 5.0;
+double seperationSlice = 10.0;
+double orderSlice = 1.0;
+double partialFreqSampling = 0.0;
+double partialPhaseSampling = 0.0;
+double modeAverage = 0.0;
+double fovPhaseOffset = 0.0;
+double fovReadOffset = 0.0;
+double dummyShot = 0.0;
+double modePhaseCode = 1.0;
+double orderPhaseCode = 1.0;
+double modePartialPhaseSampling = 0.0;
+
+int    rf_Shape_NO =11;//0;//10;//0;                       
+double tsel90 =3000;//2560;//4000;//2560.0; //us 
+double tsel180 =3000;//2560;//2666;//2560.0; //us  
+double rf90Bandwidth =1333;//960;//1500;// 960.0;               
+double rf90Scale=14.8;//13.2;//12.5;      
+double rf180Scale=8.8;//7.7;//6.5;  
+int gradWavePoint = 500;  
+double gradStepLength_up = 757;
+double gradStepLength_down = -757;                
+double rxGain = 0.0;//db                  
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//0??                      
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//0?? 
+double preDiscard = 2.0;
+double thickSliceRatioGain = 1;
+double gradMatrixSel = 3;
+double sepeceSliceTime = 300000.0; // TR/noSlices > sepeceSliceTime >TE * noEchos 
+double gainEffPhase = 150;//300.0;
+double gradSliceRatio = 1.0;
+double gradReadRatio = 1.0;
+double ratiaFreqOversampling = 1.0;
+double gradCompensation = 0.0; //the Trapezoid gain after sample
+double tcrushIn = 0.0;
+
+double tx_ph_offset_data1 = 75;//90.0;
+double tx_ph_offset_data2 = 90.0;
+double tx_ph_offset_data3 = 90.0;
+double tx_ph_offset_data4 = 90.0;
+double tx_ph_offset_data5 = 90.0;
+double tx_ph_offset_data6 = 90.0;
+double tx_ph_offset_data7 = 90.0;
+double tx_ph_offset_data8 = 90.0;
+double UnifiedTDelay = 10;
+double tref = 1000;
+double gp_on = 1;
+double gr_on = 1;
+double gradr = 1;
+
+double read_gain_step = -7;
+double tScomp = 3000;
+double tRcomp = 2000;
+
+double phaseCycle = 0.0;
+
+double noEchoes_1 = 8;
+             
+void main()
+{
+    MainctrlTrigger( noAverages, noScans, TR);
+
+/*-----------------------------------------------------   
+ 选层梯度模块，ge序列需要在90度射频脉冲上施加
+ 选层和重聚相梯度。每个180度脉冲施加选层梯度。                     
+------------------------------------------------------*/ 
+
+    gradS:
+    {
+      double temp=3.0;
+		GradMatSel(0);  //选择旋转矩阵 
+    averages_loop: 
+			WaitTrigger();
+    	Delay(temp, US);
+		goto averages_loop;
+    }
+
+/*-----------------------------------------------------   
+ 读出梯度模块，根据fse序列需求计算和配置相关参数，
+ 施加读出梯度。                     
+------------------------------------------------------*/
+      
+    gradR:
+    {       
+      double temp=3.0; 
+    averages_loop: 
+			WaitTrigger();
+    	Delay(temp, US);
+		goto averages_loop;
+    }
+
+/*-----------------------------------------------------   
+ 相位编码梯度模块，根据fse序列需求计算和配置相关参数，
+ 施加相位编码梯度。                     
+------------------------------------------------------*/
+
+    gradP:
+    {       
+      double temp=3.0; 
+    averages_loop: 
+			WaitTrigger();
+    	Delay(temp, US);
+		goto averages_loop;
+    }  
+
+ /*-----------------------------------------------------   
+ 发射模块，根据se序列需求计算和配置相关参数，
+ 每个Scan发射一个90度软脉冲和noEchoes个180度软脉冲。                     
+------------------------------------------------------*/
+
+    tx1:
+    {
+      double trampTime;
+      double fixDelayTime;
+      double delayTime_rf90_1; 
+      double delayTime_rf180_c1; 
+      double rep_cnt = 0.0;
+      double rep_cnt1 = 0.0;
+      double ttxgatepost = 10.0;                
+      double ttxgatepre = 10.0; 
+      double noSlice=0.0;  
+      double tx_freq_offset_data; 
+
+      double delayTime_rfinv ;
+      
+      
+      trampTime = gradWavePoint ;//* gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay + trampTime;
+      tx_start:
+      TxFirReset(); 
+      WaitTrigger();
+      TxAvePhase( modeAverage,noAverages,tx_freq_offset_data, tx_ph_offset_data,KHZ, CHANNEL1);  //设置频偏和相偏
+      rep_cnt = 0.0;
+      TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+      
+      slice_loop:
+        rep_cnt1 = 0.0;
+        noSlice = TxSliceCount( orderSlice,  noSlices, rep_cnt);
+        tx_freq_offset_data = rf90Bandwidth/(thickSlice*thickSliceRatioGain) * (distanceSlice1 + (noSlice-1.0) * seperationSlice);
+        TxFreqOffsetReg(CHANNEL1,tx_freq_offset_data,HZ);  
+        delayTime_rf90_1 = fixDelayTime+sepeceSliceTime*rep_cnt;
+        delayTime_rf180_c1 = delayTime_rf90_1+TE*0.5 + tsel90*0.5 - tsel180*0.5;                      //第一个180度脉冲开始发送的等待时间
+   //     delayTime_rfinv = fixDelayTime+t1CountTime+ T1*rep_cnt1+sepeceSliceTime*t1_cnt;
+   ////     TxPhaseOffsetReg(CHANNEL1,rfinv_ph_offset_data);
+   //     TxAttReg(CHANNEL1,rfinvScale);//ch,att db       
+   //     TimerCmp(delayTime_rfinv,US);
+ //       TxStart(CHANNEL1,tselinv,ttxgatepre,ttxgatepost);
+        TxAttReg(CHANNEL1,rf90Scale);//ch,att db 
+        TxPhaseCycle(CHANNEL1, phaseCycle, noAverages,rep_cnt);
+     //   TxChannelShapeSel(CHANNEL1,10);
+    //    TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+        TimerCmp(delayTime_rf90_1,US);
+        TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+          noEchoes_loop:                                                   //noEchoes循环结构
+            rep_cnt1 = rep_cnt1+1.0;
+            if(rep_cnt1 == 1.0)
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data1);              //第一个180度脉冲相偏值
+            else if(rep_cnt1 == 2.0)
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data2);              //第二个180度脉冲相偏值
+            else if(rep_cnt1 == 3.0)
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data3);              //第三个180度脉冲相偏值
+            else if(rep_cnt1 == 4.0)
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data4);              //第四个180度脉冲相偏值
+            else if(rep_cnt1 == 5.0)
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data5);              //第五个180度脉冲相偏值
+            else if(rep_cnt1 == 6.0)
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data6);              //第六个180度脉冲相偏值
+            else if(rep_cnt1 == 7.0)
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data7);              //第七个180度脉冲相偏值
+            else if(rep_cnt1 == 8.0)
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data8);              //第八个180度脉冲相偏值
+            else
+               TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data8);              //第八个180度脉冲相偏值
+      //      TxChannelShapeSel(CHANNEL1,9);
+        //    TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+            TxAttReg(CHANNEL1,rf180Scale);//ch,att db   
+            TimerCmp(delayTime_rf180_c1,US);
+            TxStart(CHANNEL1,tsel180,ttxgatepre,ttxgatepost);
+            delayTime_rf180_c1 = delayTime_rf180_c1 + TE;                  //第一个180度脉冲之后的180度脉冲发送等待时间
+            if(rep_cnt1 < noEchoes_1)//noEchoes
+          goto noEchoes_loop;        
+          rep_cnt = rep_cnt + 1.0;
+          if(rep_cnt < noSlices )
+        goto slice_loop;
+      goto tx_start;
+   }
+
+/*-----------------------------------------------------   
+ 接收模块，根据fse序列需求计算和配置相关参数，
+ 每个Scan采集noEchoes个回波信号。                     
+------------------------------------------------------*/
+
+    rx1:
+    {
+      double trampTime;
+      double fixDelayTime;
+      double sample_period;
+      double delayTime_1; 
+      double delayTime_c1; 
+      double delayTime_c2;
+      double rep_cnt = 0.0;
+      double rep_cnt1 = 0.0;
+      double sample_total;
+      double preTacq;
+      double noPreEffSample;
+      double trxgatepre = 10.0;                 
+      double trxgatepost = 10.0; 
+      double RxPhaseCycleCont_cnt1 = 0.0;
+      double RxPhaseCycleCont_phase = 0.0;  
+      double noechoes;   
+      rx_start:   
+      RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);       
+      RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data);     
+      RxFreqOffsetReg(CHANNEL3,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL3,rx_ph_offset_data);     
+      RxFreqOffsetReg(CHANNEL4,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL4,rx_ph_offset_data); 
+      /*
+      RxFreqOffsetReg(CHANNEL5,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL5,rx_ph_offset_data);       
+      RxFreqOffsetReg(CHANNEL6,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL6,rx_ph_offset_data);     
+      RxFreqOffsetReg(CHANNEL7,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL7,rx_ph_offset_data);     
+      RxFreqOffsetReg(CHANNEL8,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL8,rx_ph_offset_data); 
+      */
+      
+      sample_total =preDiscard +  noSamples;
+      sample_period=RxChannelAcquirePara(samplePeriod,sample_total);
+      RxGainReg(CHANNEL1,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL2,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL3,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL4,rxGain);  //ch, db att  
+      /*
+      RxGainReg(CHANNEL5,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL6,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL7,rxGain);  //ch, db att  
+      RxGainReg(CHANNEL8,rxGain);  //ch, db att  
+      */
+      trampTime = gradWavePoint ;//* gradSamplePeriod;
+      fixDelayTime = TX_FILTER_DELAY-trxgatepre+UnifiedTDelay+trampTime;
+      noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+      preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+      WaitTrigger();
+
+      rep_cnt = 0.0; 
+      slice_loop:
+        rep_cnt1 = 0.0;
+        delayTime_c1 = fixDelayTime+sepeceSliceTime*rep_cnt;//+TE-preTacq+tsel90*0.5 +sepeceSliceTime*rep_cnt; 
+        delayTime_c2 = delayTime_c1 + TE/2 + tsel90*0.5 - tsel180*0.5;
+        RxPhaseOffsetReg(CHANNEL1,0.0);                                        //每个回波采集前相位需清零
+        TimerCmp(delayTime_c1,US);
+        RxStart(15,trxgatepre,trxgatepost,sample_period);
+        
+          noEchoes_loop:                                                           //noEchoes循环结构，一个Scan中采集noEchoes个回波
+            rep_cnt1 = rep_cnt1+1.0;
+            RxPhaseOffsetReg(CHANNEL1,0.0);                                        //每个回波采集前相位需清零
+            TimerCmp(delayTime_c2,US);
+            RxStart(15,trxgatepre,trxgatepost,sample_period);
+            delayTime_c2 = delayTime_c2 + TE;
+            if(rep_cnt1 < noEchoes_1)//noEchoes
+          goto noEchoes_loop;  
+                         
+          rep_cnt = rep_cnt + 1.0;
+
+          noechoes = noEchoes;
+          
+          if(rep_cnt < noSlices )
+        goto slice_loop;         
+      goto rx_start;
+    }
+
+    
+
+}
+      
+
+
+
+
+
+
+
+

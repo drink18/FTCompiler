@@ -1,0 +1,230 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd.
+Project name     :    MRI
+File name        :    hrfopt.src
+Author           :
+Contacts         :
+Date             :    2017.04.24
+File version     :
+Key words        :    
+File discription :    
+Modified history :
+Date       Author             Version          Details
+========================================================
+
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"
+#include "grad.h"
+#include "tx.h"
+#include "rx.h"
+#include "mainctrl.h"
+
+double noEchoes = 2.0;       //每个TR内的回波数。
+double noScans  = 256.0;     //TR数。
+double noAverages = 1.0;     //图像的平均次数。
+double noSliceBlock = 1.0;   //每个TR中的层数。
+double noSamples =256.0;     //采样点数。
+double samplePeriod=30.0;    //采样周期。
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double TR = 500.0;//ms
+double TE = 40000.0;//us
+double distanceSlice1 = 0.0;
+
+double gradWavePoint = 500;
+double gradSamplePeriod = 1;
+
+double tsel90 = 2560;
+double rf90Scale = 12.5;
+double tau_extend_a = 100; // 0-3767
+double tau_extend_b = 100;
+double tau_extend_c = 30000;
+
+double tbef90 = 55; // 2-32767
+
+double tbefacq = 40;
+double tacqaft = 55;
+
+double Gspoil = 0;
+double tSpoil = 100000;
+double tECDelay = 100000;// 1000- 300000
+double Gcrush = 0;
+double tCrush = 100;
+
+double Gslice = -200;
+
+double rxGain = 0;
+
+double gradMatrixSel = 0;
+double UnifiedTDelay = 10;
+
+double rf_Shape_NO = 0;
+
+double ttxgatepost = 10.0;                
+double ttxgatepre = 10.0;                      
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//0??       
+double trxgatepre = 10.0;                 
+double trxgatepost = 10.0;                    
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//0??   
+void main()
+{
+    MainctrlTrigger( noAverages, noScans, TR);  //产生扫描中对应数目的trigger信号
+    
+
+
+    gradS:
+    {
+      double trampTime;
+      double fix_delaytime;
+      double holdtime1;
+      double delayTime1;
+      int    waveSel1_1;
+      int    waveSel1_2;
+      double tacq;
+             
+      GradMatSel(gradMatrixSel);                                                     
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fix_delaytime = UnifiedTDelay ;
+      tacq=AcquireDuration(samplePeriod,noSamples);      
+      holdtime1 = tbef90+ 1000 + tsel90*3 + trampTime*6 + tCrush*3 + tbefacq*2 +tacq*2 + tau_extend_a + tau_extend_b*2 + tau_extend_c;  
+      delayTime1 = fix_delaytime +trampTime*2 + tSpoil + tECDelay;
+      waveSel1_1 = 0;                                                                                 
+      waveSel1_2 = 1;                                                                                
+      
+      averages_loop:                                                              
+      WaitTrigger();                                                           
+      TimerCmp(delayTime1 ,US);    
+      TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,holdtime1, trampTime,Gslice);                                                
+      goto averages_loop;
+      }
+      
+    gradR:
+    {
+      double trampTime;
+      double fix_delaytime;
+      double delayTime1;
+      double delayTime2;
+      double delayTime3;
+      double delayTime4;
+      int    waveSel1_1;
+      int    waveSel1_2;
+      double tacq;
+                                                              
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fix_delaytime = UnifiedTDelay ;
+      tacq=AcquireDuration(samplePeriod,noSamples);      
+
+      delayTime1 = fix_delaytime ;
+      delayTime2 = fix_delaytime + trampTime*3 + tSpoil+tECDelay + tbef90 + 1000+ tsel90;
+      delayTime3 = delayTime2 + trampTime*2 + tCrush + tau_extend_a + tsel90 ;
+      delayTime4 = delayTime3 + trampTime*2 + tCrush + tau_extend_b + tbefacq + tacq + tau_extend_c +tsel90;
+      
+      waveSel1_1 = 0;                                                                               
+      waveSel1_2 = 1;                                                                                
+      
+      averages_loop:                                                                
+      WaitTrigger();                                                            
+      TimerCmp(delayTime1 ,US);  
+      TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tSpoil, trampTime,Gspoil); 
+      TimerCmp(delayTime2,US);
+      TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tCrush, trampTime,Gcrush); 
+      TimerCmp(delayTime3,US);
+      TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tCrush, trampTime,Gcrush);   
+      TimerCmp(delayTime4,US);
+      TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tCrush, trampTime,Gcrush);        
+      goto averages_loop;
+      }
+      
+    gradP:
+    {
+      double trampTime;
+      double fix_delaytime;
+      double delayTime1;
+      int    waveSel1_1;
+      int    waveSel1_2;
+                                           
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fix_delaytime = UnifiedTDelay ;
+    
+      delayTime1 = fix_delaytime ;
+
+      waveSel1_1 = 0;                                                                               
+      waveSel1_2 = 1;                                                                                
+      
+      averages_loop:                                                                
+      WaitTrigger();                                                           
+      TimerCmp(delayTime1 ,US);  
+      TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,tSpoil, trampTime,Gspoil); 
+    
+      goto averages_loop;
+      }
+      
+    tx1:
+    {
+      double trampTime;
+      double fix_delaytime;
+      double delayTime_rf90_1; 
+      double delayTime_rf90_c1; 
+      double delayTime_rf90_c2;
+      double tacq;
+             
+      tx_start:
+      TxFirReset(); 
+      TxFreqOffsetReg(CHANNEL1,tx_freq_offset_data,KHZ);
+      TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);
+      TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+       
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fix_delaytime = trampTime;  
+      tacq=AcquireDuration(samplePeriod,noSamples);      
+        
+      WaitTrigger();
+      TxAttReg(CHANNEL1,rf90Scale); 
+      delayTime_rf90_1 = fix_delaytime + trampTime*2 + tSpoil + tECDelay + tbef90 + 1000;                         
+      delayTime_rf90_c1 = delayTime_rf90_1+tsel90 + trampTime*2 + tCrush + tau_extend_a;                
+      delayTime_rf90_c2 = delayTime_rf90_c1+trampTime*2 + tCrush + tsel90+tau_extend_b+tbefacq + tacq + tau_extend_c;          
+      TimerCmp(delayTime_rf90_1,US);                            
+      TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);          
+      TimerCmp(delayTime_rf90_c1,US);                           
+      TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);          
+      TimerCmp(delayTime_rf90_c2,US);                           
+      TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);             
+      goto tx_start;
+    }
+    
+    rx1:
+    {
+       double trampTime;
+       double fix_delaytime;
+       double delayTime1; 
+       double tacq;
+       double sample_period;
+       double rep_cnt;
+     
+       rx_start:
+       RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+       RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);
+       sample_period=RxChannelAcquirePara(samplePeriod,noSamples);
+       tacq=AcquireDuration(samplePeriod,noSamples);
+       RxGainReg(CHANNEL1,rxGain);  //ch, db att  
+       trampTime = gradWavePoint * gradSamplePeriod;
+       fix_delaytime = TX_FILTER_DELAY+trampTime-trxgatepre;
+       rep_cnt = 0;
+       WaitTrigger();   
+       delayTime1 =  fix_delaytime+trampTime*6 + tSpoil + tECDelay + tbef90 + 1000 + tsel90*2 + tCrush*2 + tau_extend_a + tau_extend_b + tbefacq;
+       noEchoes_loop:                                              
+         RxPhaseOffsetReg(CHANNEL1,0.0);                           
+         TimerCmp(delayTime1,US);                                  
+         RxStart(CHANNEL1,trxgatepre,trxgatepost,sample_period);   
+         delayTime1 = delayTime1+tacq+ tau_extend_c + tau_extend_b + tsel90 + trampTime*2 + tCrush;                        
+         rep_cnt = rep_cnt+1.0;
+         if(rep_cnt < noEchoes)
+       goto noEchoes_loop;           
+       goto rx_start;
+    }  
+      
+ }

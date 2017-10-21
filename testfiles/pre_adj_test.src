@@ -1,0 +1,359 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    pre_adj.src                                            
+Author           :    firtech                                            
+Contacts         :                                                
+Date             :    2017.01.06                                            
+File version     :                                                
+Key words        :                                                
+File discription :    pre_adj序列代码编写                                            
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+        
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"
+#include "grad.h"
+#include "tx.h"
+#include "rx.h"
+#include "mainctrl.h"
+
+/*-----------------------------------------------------
+ 全局变量定义，此处定义的变量序列中使用到的会在
+ 菲特谱仪设备管理软件的Load Runnable Config界面中
+ 显示。变量可以在序列或者Load Runnable Config修改
+------------------------------------------------------*/
+double noEchoes = 10.0;
+double noScans = 2048;
+double noAverages = 1.0;
+double noSliceBlock = 1.0;
+double no_View_Block = 256.0;
+double samplePeriod = 10.0;
+double noSamples = 2048.0;
+double TR = 3000.0;
+double TE = 5000.0;
+double tsel90 = 100;//1000.0;//
+double rf90Scale=10.6;
+double tx_ph_offset_data = 0.0;
+double tx_freq_offset_data =0.0;
+double rxGain = 0.5;
+double trxgatepost = 10.0;
+double trxgatepre = 10.0;
+double rx_freq_offset_data = 0.0;
+double rx_ph_offset_data = 0.0;
+double GMAX = 0.0;
+
+double preDiscard = 2.0;
+double gradMatrixSel = 1.0;
+double gradWavePoint = 500.0;
+double gradSamplePeriod = 1.0;//
+
+double graddelay = 1000.0;//1,2.5, 5, 10, 25, 50, 100, 250, 500, 2000ms
+
+double S_Gradient = 1 ;//1.0:on;0.0:off
+double P_Gradient = 0 ;//1.0:on;0.0:off
+double R_Gradient = 0 ;//1.0:on;0.0:off
+double Tplat = 100000.0;//
+double gradGain = 800.0;//
+double Trdd = 80.0;
+double Delay_Test1 = 2500;
+double Delay_Test2 = 5000;
+double Delay_Test3 = 10000;
+double Delay_Test4 = 25000;
+double Delay_Test5 = 50000;
+double Delay_Test6 = 100000;
+double Delay_Test7 = 250000;
+double Delay_Test8 = 500000;
+double Delay_Test9 = 2000000;
+double UnifiedTDelay = 10;
+
+void main()
+{
+    MainctrlTrigger(noAverages,noScans,TR);
+    
+    /*-----------------------------------------------------   
+ 选层梯度模块                    
+------------------------------------------------------*/    
+  gradS:
+   {
+    
+     double trampTime;
+        double fixDelayTime;
+        double holdTime1;
+        double delayTime1;
+        double rep_cnt = 0.0;
+        int waveSel1_1;
+        int waveSel1_2;
+        double gradGain1;
+      
+      GradMatSel(gradMatrixSel);//选择旋转矩阵，只在slice中使用
+        trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay; //TX_RF_FIS_GRA_SEC_DELAY;
+      
+        averages_loop:
+      
+        gradGain1 = gradGain;//rf90Bandwidth/(thickSlice*thickSliceRatioGain);
+      
+        holdTime1 = Tplat;
+      
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;
+      
+        rep_cnt = 0.0;
+        WaitTrigger();
+      
+      
+        delayTime1 = fixDelayTime;
+        if(S_Gradient==1.0)
+         {
+          TimerCmp(delayTime1,US);    
+          TrapezoidOneFixTrampTimeStart(waveSel1_1, waveSel1_2, holdTime1, trampTime, gradGain1);
+         }
+      
+        goto averages_loop;
+       
+      
+   }
+   
+/*-----------------------------------------------------   
+ 读出梯度模块                    
+------------------------------------------------------*/    
+  gradR:
+   {
+    
+        double trampTime;
+        double fixDelayTime;
+        double holdTime1;
+        double delayTime1;
+        double rep_cnt = 0.0;
+        int waveSel1_1;
+        int waveSel1_2;
+        double gradGain1;
+      
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+      
+        averages_loop:
+      
+        gradGain1 = gradGain;//rf90Bandwidth/(thickSlice*thickSliceRatioGain);
+      
+        holdTime1 = Tplat;
+      
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;
+      
+        rep_cnt = 0.0;
+        WaitTrigger();
+      
+      
+        delayTime1 = fixDelayTime;
+        if(R_Gradient==1)
+        {
+         TimerCmp(delayTime1,US); 
+         TrapezoidOneFixTrampTimeStart(waveSel1_1, waveSel1_2, holdTime1, trampTime, gradGain1);
+        }
+      
+        goto averages_loop;
+       
+      
+   }
+   
+/*-----------------------------------------------------   
+ 相位编码梯度模块                    
+------------------------------------------------------*/    
+  gradP:
+   {
+    
+        double trampTime;
+        double fixDelayTime;
+        double holdTime1;
+        double delayTime1;
+        double rep_cnt = 0;
+        int waveSel1_1;
+        int waveSel1_2;
+        double gradGain1;
+      
+        trampTime = gradWavePoint * gradSamplePeriod;
+        fixDelayTime = UnifiedTDelay;
+      
+        averages_loop:
+      
+        gradGain1 = gradGain;//rf90Bandwidth/(thickSlice*thickSliceRatioGain);
+      
+        holdTime1 = Tplat;
+      
+        waveSel1_1 = 0;
+        waveSel1_2 = 1;
+      
+        rep_cnt = 0.0;
+        WaitTrigger();
+      
+      
+        delayTime1 = fixDelayTime ;
+        if(P_Gradient==1)
+        {
+         TimerCmp(delayTime1,US);     
+         TrapezoidOneFixTrampTimeStart(waveSel1_1, waveSel1_2, holdTime1, trampTime, gradGain1);
+        }
+      
+        goto averages_loop;
+       
+     
+      
+   }
+   
+  tx1:
+   {
+    double trampTime;
+       double fixDelayTime;
+       double delayTime_rf90_1;
+       double delayTime_rf90_2;
+       double delayTime_rf90_3;
+       double delayTime_rf90_4;
+       double delayTime_rf90_5;
+       double delayTime_rf90_6;
+       double delayTime_rf90_7;
+       double delayTime_rf90_8;
+       double delayTime_rf90_9;
+       double delayTime_rf90_10;
+       double ttxgatepost = 10.0;
+       double ttxgatepre = 10.0;
+       double totalsample;
+       double Tacq;
+       double delay_tmp;
+
+    
+       tx_start:
+       TxFirReset();
+
+       TxHardPulseShape(CHANNEL1,tsel90);
+       TxFreqOffsetReg(CHANNEL1,tx_freq_offset_data,KHZ);  //设置发射脉冲频偏
+       TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);       //设置发射脉冲相偏
+       TxAttReg(CHANNEL1,rf90Scale);//ch,att db 
+       
+       trampTime = gradWavePoint * gradSamplePeriod; 
+       totalsample = preDiscard + noSamples;
+     Tacq = AcquireDuration(samplePeriod,totalsample);
+       WaitTrigger();
+       fixDelayTime = 0.0;
+       delay_tmp =  fixDelayTime +trampTime*2.0+ Tplat ;
+       delayTime_rf90_1 = delay_tmp +graddelay ;
+       
+       delayTime_rf90_2 = delay_tmp + Delay_Test1 ;
+       delayTime_rf90_3 = delay_tmp + Delay_Test2 ;
+       delayTime_rf90_4 = delay_tmp + Delay_Test3 ;
+       delayTime_rf90_5 = delay_tmp + Delay_Test4 ;
+       delayTime_rf90_6 = delay_tmp + Delay_Test5 ;
+       delayTime_rf90_7 = delay_tmp + Delay_Test6 ;
+       delayTime_rf90_8 = delay_tmp + Delay_Test7 ;
+       delayTime_rf90_9 = delay_tmp + Delay_Test8 ;
+       delayTime_rf90_10 = delay_tmp + Delay_Test9 ;
+
+  
+       TimerCmp(delayTime_rf90_1,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+        TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);  
+       TimerCmp(delayTime_rf90_2,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       TimerCmp(delayTime_rf90_3,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       TimerCmp(delayTime_rf90_4,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       TimerCmp(delayTime_rf90_5,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       TimerCmp(delayTime_rf90_6,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       TimerCmp(delayTime_rf90_7,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       TimerCmp(delayTime_rf90_8,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       TimerCmp(delayTime_rf90_9,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       TimerCmp(delayTime_rf90_10,US);
+       TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);
+       
+
+
+       goto tx_start;
+   }
+   
+  rx1:
+    {
+      double trampTime;
+      double fixDelayTime;
+      double sample_period;
+      double delayTime_c1;
+      double delayTime_c2;
+      double delayTime_c3;
+      double delayTime_c4;
+      double delayTime_c5;
+      double delayTime_c6;
+      double delayTime_c7;
+      double delayTime_c8;
+      double delayTime_c9;
+      double delayTime_c10;
+      double delay_tmp;
+
+      double trxgatepre = 10.0;
+      double trxgatepost = 10.0;
+      double Tacq;
+    double totalsample;
+      
+
+      rx_start:
+
+      RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);
+
+      RxGainReg(CHANNEL1,rxGain);  //ch, db att
+    totalsample = preDiscard + noSamples;
+    Tacq = RxChannelAcquirePara(samplePeriod,totalsample);
+
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_FILTER_DELAY - trxgatepre;
+
+      WaitTrigger();
+
+      delayTime_c1 = fixDelayTime + Tplat + trampTime * 2 + tsel90  + Trdd + graddelay;
+      delay_tmp = fixDelayTime + Tplat + trampTime * 2 + tsel90  + Trdd;
+      delayTime_c2 = delay_tmp + Delay_Test1 ;
+      delayTime_c3 = delay_tmp + Delay_Test2 ;
+      delayTime_c4 = delay_tmp + Delay_Test3 ;
+      delayTime_c5 = delay_tmp + Delay_Test4 ;
+      delayTime_c6 = delay_tmp + Delay_Test5 ;
+      delayTime_c7 = delay_tmp + Delay_Test6 ;
+      delayTime_c8 = delay_tmp + Delay_Test7 ;
+      delayTime_c9 = delay_tmp + Delay_Test8 ;
+      delayTime_c10 = delay_tmp + Delay_Test9 ;
+
+      TimerCmp(delayTime_c1,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);
+      TimerCmp(delayTime_c2,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      TimerCmp(delayTime_c3,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      TimerCmp(delayTime_c4,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      TimerCmp(delayTime_c5,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      TimerCmp(delayTime_c6,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      TimerCmp(delayTime_c7,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      TimerCmp(delayTime_c8,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      TimerCmp(delayTime_c9,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      TimerCmp(delayTime_c10,US);
+      RxStart(CHANNEL1,trxgatepre,trxgatepost,Tacq);
+      
+
+      noEchoes = 10;
+
+      goto rx_start;
+   }
+}

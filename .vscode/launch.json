@@ -1,0 +1,25 @@
+{
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "(gdb) Launch Debug",
+                "type": "cppdbg",
+                "request": "launch",
+                "program": "${workspaceRoot}/buildDebug/P2F_DEBUG.exe",
+                "args": ["testfiles/1pulse.src", "-Itestfiles/include"],
+                "stopAtEntry": false,
+                "cwd": "${workspaceRoot}",
+                "environment": [],
+                "externalConsole": true,
+                "MIMode": "gdb",
+                "miDebuggerPath": "C:/tools/mingw64/bin/gdb.exe",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing for gdb",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ]
+            }
+        ]
+    }

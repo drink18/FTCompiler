@@ -1,0 +1,355 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd.
+Project name     :    MRI
+File name        :    GradShim.src
+Author           :    liwanru
+Contacts         :
+Date             :    2017.04.22
+File version     :
+Key words        :    Graddient Shimming.
+File discription :    
+Modified history :
+Date       Author             Version          Details
+========================================================
+2017.04.22   liwanru           v1.0
+
+*********************************************************************************************************************************
+序列功能：
+梯度匀场
+
+*********************************************************************************************************************************
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"
+#include "grad.h"
+#include "tx.h"
+#include "rx.h"
+#include "mainctrl.h"
+
+double noEchoes = 1.0;       //每个TR内的回波数。
+double noScans  = 256.0;     //TR数。
+double noAverages = 1.0;     //图像的平均次数。
+double noSliceBlock = 1.0;   //每个TR中的层数。
+double noSamples =256.0;     //采样点数。
+double samplePeriod=30.0;    //采样周期。
+double effectiveEcho = 1.0;  //单回波时为1。多回波序列中，该序号对应的回波将被置于K空间最接近0的位置。
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double TR = 500.0;//ms
+double TE = 40000.0;//us
+double distanceSlice1 = 0.0;
+double thickSlice = 5.0;     //层厚 mm
+double seperationSlice = 10.0;
+double orderSlice = 1.0;
+double ratioPhaseSampling = 1.0;
+double ratioFreqSampling = 1.0;
+double partialFreqSampling = 0.0;  //部分频率采样。K空间丢弃的频率方向（水平x轴）点数。
+double partialPhaseSampling = 0.0; //部分相位采样。K空间丢弃的相位方向（垂直y轴）点数。
+double modeAverage = 0.0;
+double phaseCycle = 0.0;
+double fovPhaseOffset = 0.0;
+double fovReadOffset = 0.0;
+double dummyShot = 0.0;
+double modePhaseCode = 1.0;
+double orderPhaseCode = 1.0;//此值最小为1。
+double modePartialPhaseSampling = 0.0;
+double flow_comp_on = 0.0;
+
+int rf_Shape_NO =0;
+int mtc_Shape_NO = 1;
+int sat_Shape_NO = 2;
+double tsel90 =2560.0; //us
+double rf90Bandwidth = 960.0;
+double rf90Scale=12.5; //dB  90°RF脉冲校准后的增益值。
+double rf180Scale=6.5; //dB  在90°RF脉冲增益的基础上衰减6dB。
+double gradWavePoint = 500.0;
+double gradSamplePeriod = 1.0;//us
+double rxGain = 0.0;//db  收端增益。
+double tx_freq_offset_data = 0.0;//KHZ
+double tx_ph_offset_data = 0.0;//0??
+double rx_freq_offset_data = 0.0;//KHZ
+double rx_ph_offset_data = 0.0;//0??
+double sliceRephase = 1.0; //重聚相梯度位置选择。0 ->trephase_pre180 1 ->trephase_post180
+double preDiscard = 2.0;//采样丢弃点数。
+
+double thickSliceRatioGain = 1.32;
+double gradMatrixSel = 0; //梯度旋转矩阵选择。
+double sepeceSliceTime = 40000.0; // TR/noSliceBlock > sepeceSliceTime >TE * noEchos
+
+
+double ratiaFreqOversampling = 1.0;
+
+double tref = 3590;//1500.0;
+double UnifiedTDelay = 50.0;//Unified time delay(US)
+double tSpoil = 500.0;//us
+double tECDelay = 200.0;//us
+
+double gr_spoil = 100;
+
+
+int gs_matrix_base = 0;
+
+void main()
+{
+   //产生内部触发信号；完成TR周期循环。
+   MainctrlTrigger( noAverages, noScans, TR);
+
+   gradS:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double t_comp;
+      double delayTime1;
+      double delayTime;
+      double gs_var;
+      double gs_comp;
+      double rep_cnt = 0.0;
+      int waveSel1_1;
+      int waveSel1_2;
+      int gs_matrix_sel;
+
+      //梯度爬升时间计算。
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay;
+      averages_loop:
+      
+      //选层梯度增益，波形对应着90°RF和180°RF脉冲。
+      gs_var = GardSliceGain(rf90Bandwidth,thickSlice,thickSliceRatioGain);
+
+      //重聚相梯度在180°RF脉冲之前的重聚相时间。
+      t_comp = tref;
+
+      //选层梯度增益，波形为对应着90°RF脉冲的反向部分。
+      gs_comp = 0.5*gs_var*(tsel90+trampTime)/(t_comp+trampTime);
+
+      waveSel1_1 = 0;
+      waveSel1_2 = 1;
+    
+		gs_matrix_sel = 0;
+      rep_cnt = 0.0; //层数计数器。
+      WaitTrigger();
+      	
+      slice_loop://多层循环
+      delayTime  = fixDelayTime + sepeceSliceTime*rep_cnt;
+      
+      delayTime1 = fixDelayTime + 2.0 * trampTime + tSpoil + tECDelay + sepeceSliceTime*rep_cnt;
+      TimerCmp(delayTime,US);
+      GradMatSel(gs_matrix_base + rep_cnt);//gs_matrix_sel);
+      TimerCmp(delayTime1,US);    
+      TrapezoidTwoFixTrampTimeStart( waveSel1_1,waveSel1_2,waveSel1_2,waveSel1_1,\
+                                     tsel90, 0.0, tref, trampTime, gs_var, gs_comp);
+      
+      gs_matrix_sel = gs_matrix_sel + 1;
+      rep_cnt = rep_cnt + 1.0;
+      if(rep_cnt < noSliceBlock )
+      goto slice_loop;
+	
+      goto averages_loop;
+   }
+
+   gradR:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double t_comp;
+      double delayTime;
+      double delayTime1;
+      double delayTime2;
+      double delayTime_mtc;
+      double delayTime_sat;
+    //  double gr_spoil;
+      double gr_var;
+      double preTacq;
+      double tacq;
+      double totalsample;
+      double noPreEffSample;
+      double rep_cnt;
+      int waveSel1_1;
+      int waveSel1_2;
+      double GrPos = 1;
+
+      //梯度爬升时间计算。
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay;
+
+      totalsample = preDiscard +  noSamples; //总采样点数。
+      tacq = AcquireDuration(samplePeriod,totalsample);//总采样时长。
+      noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+      preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+
+      gr_var = GardReadGain( samplePeriod, fovRead, ratiaFreqOversampling);
+      
+      t_comp = tsel90*0.5;
+
+      waveSel1_1 = 0;
+      waveSel1_2 = 1;
+
+      averages_loop:
+      WaitTrigger();
+	   
+      rep_cnt = 0.0;        
+      slice_loop:
+
+      delayTime  = fixDelayTime + sepeceSliceTime*rep_cnt;
+      delayTime1 = fixDelayTime + 4.0*trampTime + tSpoil + tECDelay + tsel90 + sepeceSliceTime*rep_cnt;
+    //  delayTime2 = fixDelayTime + 2.0*trampTime + tSpoil + tECDelay + tsel90*0.5 + TE - preTacq + sepeceSliceTime*rep_cnt;
+
+      TimerCmp(delayTime,US);
+      TrapezoidOneFixTrampTimeStart( waveSel1_2, waveSel1_1, tSpoil, trampTime, gr_spoil);
+
+      gr_var = gr_var * GrPos;
+      TimerCmp(delayTime1,US);
+      TrapezoidTwoFixTrampTimeStart( waveSel1_2, waveSel1_1, waveSel1_1,waveSel1_2,tref,0,tacq, trampTime, gr_var,gr_var);
+
+      //对应与回波采样时刻的读出梯度。
+   //   TimerCmp(delayTime2 ,US);
+   //   TrapezoidOneFixTrampTimeStart( waveSel1_1, waveSel1_2, tacq, trampTime, gr_var);
+
+      rep_cnt = rep_cnt + 1.0;
+      if(rep_cnt < noSliceBlock )
+         goto slice_loop;
+
+      GrPos = (-1) * GrPos;      
+      goto averages_loop;
+   }
+
+
+   gradP:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double holdTime1;
+      double delayTime;
+      double rep_cnt;
+      double gp_spoil;
+      double dummyShotEnout;
+      double echoBlockCnt = 0.0;
+      int waveSel1_1;
+      int waveSel1_2;
+
+      //梯度爬升时间计算。
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime =  UnifiedTDelay;
+
+      waveSel1_1 = 0;
+      waveSel1_2 = 1;
+      gp_spoil = 100;
+      averages_loop:
+      WaitTrigger();
+      rep_cnt = 0.0;
+      slice_loop:
+      delayTime = fixDelayTime + sepeceSliceTime*rep_cnt;
+		
+      TimerCmp(delayTime,US);
+      TrapezoidOneFixTrampTimeStart( waveSel1_2, waveSel1_1, tSpoil, trampTime, gp_spoil);
+
+      rep_cnt = rep_cnt + 1.0;
+      if(rep_cnt < noSliceBlock )
+         goto slice_loop;
+      
+      goto averages_loop;
+   }
+
+   tx1:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double delayTime_rf90;
+      double rep_cnt = 0.0;
+      double ttxgatepost = 10.0;
+      double ttxgatepre = 10.0;
+      double noSlice=0.0;
+
+      //RF波形选择初始化。
+      TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay;
+      tx_start:
+
+      TxFirReset();
+      WaitTrigger();
+
+ //     TxAvePhase( modeAverage,noAverages,tx_freq_offset_data, tx_ph_offset_data,KHZ, CHANNEL1);
+
+      rep_cnt = 0.0;
+
+      slice_loop:  //多层循环。
+      noSlice = TxSliceCount( orderSlice,  noSliceBlock, rep_cnt);
+
+      TxFreqSet( orderSlice, distanceSlice1, seperationSlice,thickSlice,\
+                     noSlice, rf90Bandwidth, CHANNEL1,thickSliceRatioGain);
+
+      delayTime_rf90 = fixDelayTime + 3*trampTime + tSpoil + tECDelay + sepeceSliceTime*rep_cnt;
+
+      //90°RF脉冲。
+      TxPhaseCycle(CHANNEL1, phaseCycle, noAverages,rep_cnt);
+      TxAttReg(CHANNEL1,rf90Scale);//ch,att db
+      TimerCmp(delayTime_rf90,US);
+      TxStart(CHANNEL1, tsel90, ttxgatepre, ttxgatepost);
+
+      rep_cnt = rep_cnt + 1.0;
+      if(rep_cnt < noSliceBlock )
+         goto slice_loop;
+
+      goto tx_start;
+   }
+
+   rx1:
+   {
+      double trampTime;
+      double fixDelayTime;
+      double sample_period;
+      double delayTime_1;
+      double delayTime_c1;
+      double rep_cnt = 0.0;
+      double sample_total;
+      double preTacq;
+      double noPreEffSample;
+      double trxgatepre = 10.0;
+      double trxgatepost = 10.0;
+
+      rx_start:
+      //多通道0~3定义。
+      RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);
+      RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data);
+      RxFreqOffsetReg(CHANNEL3,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL3,rx_ph_offset_data);
+      RxFreqOffsetReg(CHANNEL4,rx_freq_offset_data,KHZ);
+      RxPhaseOffsetReg(CHANNEL4,rx_ph_offset_data);
+
+      sample_total =preDiscard + noSamples;//总采样点数。
+      sample_period = RxChannelAcquirePara(samplePeriod,sample_total);//总采样时长。
+
+      RxGainReg(CHANNEL1,rxGain);  //ch, db att
+      RxGainReg(CHANNEL2,rxGain);  //ch, db att
+      RxGainReg(CHANNEL3,rxGain);  //ch, db att
+      RxGainReg(CHANNEL4,rxGain);  //ch, db att
+
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = TX_FILTER_DELAY-trxgatepre+UnifiedTDelay;
+      noPreEffSample = (noSamples - partialFreqSampling)*0.5;
+      preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+   
+      WaitTrigger();
+
+      rep_cnt = 0.0;
+      slice_loop:  //多层循环
+        	
+      delayTime_c1 = fixDelayTime + 7*trampTime + tSpoil + tECDelay + tsel90 + tref + 100+ sepeceSliceTime*rep_cnt;
+
+      //收端采样波形。
+      TimerCmp(delayTime_c1,US);
+      RxStart(1, trxgatepre, trxgatepost, sample_period);
+
+      rep_cnt = rep_cnt + 1.0;
+      if(rep_cnt < noSliceBlock )
+         goto slice_loop;
+
+      goto rx_start;
+   }
+
+}
+

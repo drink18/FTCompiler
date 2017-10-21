@@ -1,0 +1,158 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    ge_seq.src                                            
+Author           :    firtech                                            
+Contacts         :                                                
+Date             :    2016.11.30                                            
+File version     :                                                
+Key words        :                                                
+File discription :    GE序列代码编写，发射一个90度软脉冲，
+                      接收采集回波信号。添加选层、读出、相位编码梯度信号。                                            
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+        
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1.0;                         
+double noScans  = 256.0;  
+double noAverages = 1.0;                                           
+double noSamples =256.0; 
+double TR = 100.0;//ms        
+double gradWavePoint = 500.0;             
+double gradSamplePeriod = 1.0;//us 
+double samplePeriod=50.0;                
+
+double gradMatrixSel = 2;
+
+double Delay_test = 0;
+double UnifiedTDelay = 2;
+double gradSMAX = 770;
+double gradRMAX = 760;
+double gradPMAX = 915;
+double holdTime = 1000;
+double gs_on = 1;
+double gr_on = 1;
+double gp_on = 1;
+
+             
+void main()
+{   
+  MainctrlTrigger( noAverages, noScans, TR);
+
+/*-----------------------------------------------------   
+ 选层梯度模块，ge序列需要在90度射频脉冲上施加
+ 选层和重聚相梯度。                     
+------------------------------------------------------*/  
+
+    gradS:
+    {
+
+      double trampTime;
+      double fixDelayTime;
+      double delayTime2;
+      int    waveSel1_1;
+      int    waveSel1_2;
+      double gradGain;
+      
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay + Delay_test;
+      delayTime2 = fixDelayTime + holdTime + trampTime*2; 
+      
+      averages_loop:                                                                              
+        GradMatSel(gradMatrixSel);                                                                
+        gradGain= gradSMAX*gs_on;
+        waveSel1_1 = 12;//8;                                                                           
+        waveSel1_2 = 13;//9;                                                                                                                                                           
+        WaitTrigger();                                                                                    
+        TimerCmp(fixDelayTime,US);                                                                
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,holdTime,trampTime,gradGain); 
+        TimerCmp(delayTime2,US);                                                                
+        TrapezoidOneFixTrampTimeStart( waveSel1_2,waveSel1_1,holdTime,trampTime,gradGain);              
+      goto averages_loop;
+    }
+
+/*-----------------------------------------------------   
+ 读出梯度模块，根据ge序列需求计算和配置相关参数，
+ 施加读出梯度。                     
+------------------------------------------------------*/
+       
+    gradR:
+    {       
+      double trampTime;
+      double fixDelayTime;
+      int    waveSel1_1;
+      int    waveSel1_2;
+      double gradGain;
+      double delayTime2;
+      
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay + Delay_test;
+      delayTime2 = fixDelayTime + holdTime + trampTime*2; 
+      
+      averages_loop:                                                                              
+ //       GradMatSel(gradMatrixSel);                                                                
+        gradGain= gradRMAX*gr_on;
+        waveSel1_1 = 12;//8;                                                                           
+        waveSel1_2 = 13;//9;                                                                                                                                                            
+        WaitTrigger();                                                                                    
+        TimerCmp(fixDelayTime,US);                                                                
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,holdTime,trampTime,gradGain);   
+        TimerCmp(delayTime2,US);                                                                
+        TrapezoidOneFixTrampTimeStart( waveSel1_2,waveSel1_1,holdTime,trampTime,gradGain);          
+      goto averages_loop;
+    }
+
+/*-----------------------------------------------------   
+ 相位编码梯度模块，根据ge序列需求计算和配置相关参数，
+ 施加相位编码梯度。                     
+------------------------------------------------------*/
+
+    gradP:
+    {       
+      double trampTime;
+      double fixDelayTime;
+      int    waveSel1_1;
+      int    waveSel1_2;
+      double gradGain;
+      double delayTime2;
+      
+      trampTime = gradWavePoint * gradSamplePeriod;
+      fixDelayTime = UnifiedTDelay + Delay_test;
+      delayTime2 = fixDelayTime + holdTime + trampTime*2; 
+      
+      averages_loop:                                                                              
+ //       GradMatSel(gradMatrixSel);                                                                
+        gradGain= gradPMAX*gp_on;
+        waveSel1_1 = 12;//8;                                                                           
+        waveSel1_2 = 13;//9;                                                                                                                                                             
+        WaitTrigger();                                                                                    
+        TimerCmp(fixDelayTime,US);                                                                
+        TrapezoidOneFixTrampTimeStart( waveSel1_1,waveSel1_2,holdTime,trampTime,gradGain); 
+        TimerCmp(delayTime2,US);                                                                
+        TrapezoidOneFixTrampTimeStart( waveSel1_2,waveSel1_1,holdTime,trampTime,gradGain);            
+      goto averages_loop;
+    }  
+
+ 
+    tx1:
+    {
+      
+    }
+
+
+    rx1:
+    {
+      double tacq;
+      tacq = AcquireDuration(samplePeriod,noSamples);
+    }
+
+}

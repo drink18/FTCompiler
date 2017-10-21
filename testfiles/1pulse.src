@@ -1,0 +1,156 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    1pluse.src                                            
+Author           :    firtech                                            
+Contacts         :                                                
+Date             :    2016.11.30                                            
+File version     :                                                
+Key words        :                                                
+File discription :    1pluse序列代码编写，发射产生一个方波脉冲，
+                      接收采集FID信号。不需添加任何梯度信号。                                            
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+        
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+/*-----------------------------------------------------
+ 全局变量定义，此处定义的变量序列中使用到的会在
+ 菲特谱仪设备管理软件的Load Runnable Config界面中
+ 显示。变量可以在序列或者Load Runnable Config修改
+------------------------------------------------------*/   
+double noEchoes = 1.0;                         
+double noScans  = 25600.0;  
+double noAverages = 1.0;                     
+double noSliceBlock = 1.0;
+double no_View_Block = 256.0;                 
+double samplePeriod=20.0;                        
+double noSamples =4096.0;                                               
+double TR = 500.0;//ms        
+double TE = 50000.0;//us                                                                                  
+double tsel90 =1000.0; //us               
+double rf90Scale=10.0;                     
+double rxGain = 0.5;//db                  
+double ttxgatepost = 10.0;                
+double ttxgatepre = 10.0;                     
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//degree       
+double trxgatepre = 10.0;                 
+double trxgatepost = 10.0;                    
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//degree                              
+                
+double trend = 1000.0;    // us rx start acquire delay time
+double preDiscard = 30.0;
+double GMAX=0.0;
+double rf_tx_delay = 100; // us rf pulse tranmit delay time 
+
+void main()
+{   
+	  MainctrlTrigger( noAverages, noScans, TR); //产生扫描中对应数目的trigger信号
+	  
+/*-----------------------------------------------------
+ 选层梯度模块，1pluse序列中不需要，为了保持代码结构
+ 一致性，添加一个空的梯度编码模块。
+------------------------------------------------------*/ 
+
+		gradS:
+    {
+		double temp=3.0;
+		GradMatSel(0);  //选择旋转矩阵 
+    averages_loop: 
+			WaitTrigger();
+    	Delay(temp, US);
+//			TrapezoidOneStart(0,1,2000.0,500.0, 500.0,GMAX); 
+		goto averages_loop;
+    }
+
+/*-----------------------------------------------------
+ 频率编码梯度模块，1pluse序列中不需要，为了保持代码结构
+ 一致性，添加一个空的梯度编码模块。
+------------------------------------------------------*/ 
+    
+		gradR:
+    {
+		double temp=3.0;
+		averages_loop: 
+			WaitTrigger();
+			Delay(temp, US);
+	//		TrapezoidOneStart(0,1,2000.0,500.0, 500.0,GMAX); 
+    goto averages_loop;
+    }  
+
+/*-----------------------------------------------------
+ 相位梯度模块，1pluse序列中不需要，为了保持代码结构
+ 一致性，添加一个空的梯度编码模块。
+------------------------------------------------------*/ 
+        	 
+		gradP:
+    {
+		double temp=3.0;
+		averages_loop: 
+      WaitTrigger();
+      Delay(temp, US);
+	//		TrapezoidOneStart(0,1,2000.0,500.0, 500.0,GMAX); 
+   goto averages_loop;
+    }
+     
+/*-----------------------------------------------------
+ 射频发射脉冲模块，产生射频脉冲，配置发送脉冲的通道、
+ 脉冲的波形、持续时间、幅度、频偏及相偏等参数。
+ 1pluse序列中产生一个方波，并设置相关参数。
+------------------------------------------------------*/ 
+    
+	 tx1:
+	 {
+		 double delayTime_rf90_1; 
+             
+		 tx_start:
+		 TxFirReset();                                       //复位发端滤波器
+		 TxFreqOffsetReg(CHANNEL1,tx_freq_offset_data,KHZ);  //设置发射脉冲频偏
+		 TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);       //设置发射脉冲相偏
+		 TxHardPulseShape(CHANNEL1,tsel90);                  //产生持续时间为tsel90的方波
+		 TxAttReg(CHANNEL1,rf90Scale);                       //设置发射增益，rf90Scale为衰减 		 
+        
+		 WaitTrigger();                                      //等待trigger信号            
+       delayTime_rf90_1 = rf_tx_delay;                   //计算开始发射脉冲时间
+		   TimerCmp(delayTime_rf90_1,US);                    //发射等待计时
+		   TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);  //计时delayTime_rf90_1后开始发射，并打开门控    
+     goto tx_start;
+	 }
+
+/*-----------------------------------------------------
+ 回波采集模块，选择采集通道、采集带宽、接收增益、
+ 频偏、相偏等参数设置。
+------------------------------------------------------*/   
+	 rx1:
+	 {
+		 double fix_delaytime;
+		 double sample_period;
+		 double delayTime_c1; 
+     double sample_total;
+     
+		 rx_start:		
+		 RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);            //设置接收脉冲频偏
+		 RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);                 //设置接收脉冲相偏
+      RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);            //设置接收脉冲频偏
+       RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data);                 //设置接收脉冲相偏
+     sample_total =preDiscard +  noSamples;                        //计算采集总点数
+		 sample_period=RxChannelAcquirePara(samplePeriod,sample_total);//计算总的采集时间
+		 RxGainReg(CHANNEL1,rxGain);                                   //设置接收增益，rxGain为放大 
+		 fix_delaytime = TX_FILTER_DELAY-trxgatepre+rf_tx_delay;       //计算回波采集开始时间中间量
+		 WaitTrigger();                                                //等待trigger信号 
+       delayTime_c1 = fix_delaytime+trend;                         //计算回波开始采集时间
+			 TimerCmp(delayTime_c1,US);                                  //采集等待计时
+			 RxStart(3,trxgatepre,trxgatepost,sample_period);     //计时delayTime_c1后开始采集，并打开门控		  
+		 goto rx_start;
+	 }
+  
+}

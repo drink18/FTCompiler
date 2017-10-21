@@ -1,0 +1,180 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    cpmg_seq.src                                            
+Author           :                                                
+Contacts         :                                                
+Date             :    2016.11.18                                            
+File version     :                                                
+Key words        :                                                
+File discription :                                                
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+     
+--------------------------------------------------------------------------------------------------*/
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1.0;                         
+double noScans  =1.0;  
+double noAverages = 2.0; 
+double modeAverage = 1.0;                    
+double noSliceBlock = 1.0;                
+double samplePeriod=200.0;                        
+double noSamples =8192.0;                                 
+double TE = 10000.0;//us  
+double TR = 3000.0;                                                                                 
+double tsel90 =600.0; //us     
+double tsel180 =1300.0; //us            
+double rf90Scale=10.6;    
+double rf180Scale=10.6;                
+double rxGain = 0.5;//db                  
+double ttxgatepost = 10.0;                
+double ttxgatepre = 10.0;                      
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//0??       
+double trxgatepre = 10.0;                 
+double trxgatepost = 10.0;                     
+double rx_freq_offset_data = 0.0;//KHZ    
+double rx_ph_offset_data = 0.0;//0??                             
+
+double preDiscard = 2.0;
+
+double tx_ph_offset_data_180 = 90.0;
+
+
+void main()
+{
+	MainctrlTrigger( noAverages, noScans, TR);
+	
+	gradS:
+    {
+    	double temp=1.0;
+      TimerCmp(temp ,US);
+      averages_loop: 
+      goto averages_loop;
+    }
+   gradR:
+    {
+      double temp=1.0;
+      TimerCmp(temp ,US);
+      averages_loop: 
+      goto averages_loop;
+    }
+   gradP:
+    {
+      double temp=1.0;
+      TimerCmp(temp ,US);
+      averages_loop: 
+      goto averages_loop;
+    }
+    
+	 tx1:
+	 {
+		 double trampTime;
+		 double fix_delaytime;
+		 double delayTime_rf180_c1; 
+		 double delayTime_pulse_1; 
+		 double delayTime_pulse_3;
+		 double rep_cnt = 0.0;
+		 double rep_cnt1 = 0.0; 
+     double Ave_rep_cnt = 0.0;
+     double Slice_rep_time_tmp = 0.0;
+     double rf180_num;
+     double avg_cnt;
+     double tx_ph_offset_data_test;
+             
+		 tx_start:
+		 TxFirReset(); 
+		 TxFreqOffsetReg(CHANNEL1,tx_freq_offset_data,KHZ);
+		 TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data);
+		 TxHardPulseShape(CHANNEL1,tsel90);  
+
+		 fix_delaytime = 10;//trampTime;		 
+		 delayTime_pulse_1=fix_delaytime;
+     Slice_rep_time_tmp = (noEchoes+1)*TE;
+      rf180_num = TR*1000 / TE;
+
+      if(avg_cnt < noAverages)
+         avg_cnt = avg_cnt + 1;
+       else
+         avg_cnt = 1;
+
+      if(avg_cnt ==1)
+         tx_ph_offset_data_test  = 90;
+      else
+       tx_ph_offset_data_test  = 270;
+        TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data_test);
+		 WaitTrigger();
+	//	 TxAvePhase( modeAverage,noAverages,tx_freq_offset_data, tx_ph_offset_data,KHZ, CHANNEL1);
+     rep_cnt = 0.0;
+     slice_loop:
+     rep_cnt1 = 0.0;
+     delayTime_pulse_1 = fix_delaytime;//+Slice_rep_time_tmp*rep_cnt;
+     TxAttReg(CHANNEL1,rf90Scale);//ch,att db 
+		 TimerCmp(delayTime_pulse_1,US);
+		 TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);     
+     delayTime_rf180_c1 = delayTime_pulse_1+TE*0.5;
+  //  TxPhaseOffsetReg(CHANNEL1,tx_ph_offset_data_180);
+          TxHardPulseShape(CHANNEL1,tsel180); 
+     rf180_loop:
+          rep_cnt1 = rep_cnt1+1.0;
+          
+          
+          TxAttReg(CHANNEL1,rf180Scale);//ch,att db   
+          TimerCmp(delayTime_rf180_c1,US);
+          TxStart(CHANNEL1,tsel180,ttxgatepre,ttxgatepost);
+          delayTime_rf180_c1 = delayTime_rf180_c1 + TE;
+          if(rep_cnt1 < rf180_num)//noEchoes
+          goto rf180_loop;
+          tx_ph_offset_data_180 = tx_ph_offset_data_180 + 180;
+		 
+     rep_cnt = rep_cnt + 1.0;
+     if(rep_cnt < noSliceBlock )
+     goto slice_loop;
+       
+     goto tx_start;
+	 }
+	 
+	   rx1:
+    {
+       double trampTime;
+       double fixDelayTime;
+       double sample_period;
+       double delayTime_1; 
+       double delayTime_c1; 
+       double rep_cnt = 0.0;
+       double sample_total;
+       double preTacq;
+       double noPreEffSample;
+       double trxgatepre = 10.0;                 
+       double trxgatepost = 10.0; 
+       rx_start:
+      
+       RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);
+       RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data);         
+       sample_total =preDiscard +  noSamples;
+       sample_period=RxChannelAcquirePara(samplePeriod,sample_total);
+       RxGainReg(CHANNEL1,rxGain);  //ch, db att  
+       fixDelayTime = TX_FILTER_DELAY-trxgatepre;
+       WaitTrigger();
+
+       rep_cnt = 0.0; 
+       TimerCmp(fixDelayTime,US);
+       RxStart(CHANNEL1,trxgatepre,trxgatepost,sample_period);
+       slice_loop:
+         
+         rep_cnt = rep_cnt + 1.0;
+         if(rep_cnt < noSliceBlock )
+         goto slice_loop;
+         
+        goto rx_start;
+   }
+
+}

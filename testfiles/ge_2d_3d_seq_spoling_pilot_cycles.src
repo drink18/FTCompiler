@@ -1,0 +1,599 @@
+/*-------------------------------------------------------------------------------------------------
+(C) COPYRIGHT 2016 FIRSTECH Co., Ltd. ALL RIGHTS RESERVED
+This software and the associated documentation are confidential and proprietary to Firstech Co., Ltd. 
+Project name     :    MRI                                         
+File name        :    ge_2d_3d_seq_spoling_pilot_cycles.src                                            
+Author           :    firtech                                            
+Contacts         :                                                
+Date             :    2017.07.27                                            
+File version     :                                                
+Key words        :                                                
+File discription :    导航序列每次扫面完等待下一次扫描                                            
+Modified history :                                                
+Date       Author             Version          Details            
+======================================================== 
+        
+--------------------------------------------------------------------------------------------------*/
+
+import TX 0 4 "D:\\FT_mri_working\\firstech_lib_bak_0821\\wave\\Rect_lob5_2KHz_2us_1500_3000us.rfwave" Rect_lob5_2KHz_2us_1500_3000us
+import TX 0 0 "D:\\FT_mri_working\\firstech_lib_bak_0821\\wave\\tone60_reverse.rfwave" tone60_reverse
+
+#include "common.h"     
+#include "grad.h"       
+#include "tx.h"         
+#include "rx.h"         
+#include "mainctrl.h"   
+
+double noEchoes = 1.0;                         
+double noScans  = 256.0;  
+double noScansPilot  = 64;  
+double noViewsSec = 16.0;
+double noAverages = 1.0;                     
+double noSlices = 1.0;                       
+double noSamples =256.0;  
+double noSamplesPilot =64;
+double samplePeriod=50.0; 
+double effectiveEcho = 1.0; 
+double fovPhase = 250.0;
+double fovRead  = 250.0;
+double fovPhaseOffset = 0.0;//25.0;
+double fovReadOffset  = 0.0;//45.0;
+double TR = 100.0;//ms        
+double TE = 20000.0;//us
+double distanceSlice1 = 0.0;
+double thickSlice =32;// 5.0;
+double thickSlicePilot =5;// 5.0;
+double seperationSlice = 10.0;
+double orderSlice = 1.0;
+double partialFreqSampling = 0.0;
+double partialPhaseSampling = 0.0;
+double modeAverage = 0.0;
+double phaseCycle = 0.0;
+double dummyShot = 0.0;
+double modePhaseCode = 1.0;
+double orderPhaseCode = 0.0;
+double modePartialPhaseSampling = 0.0;
+int    rf_Shape_NO =0;//4;                       
+double tsel90 =2048;//3000.0; //us 
+double tsel180 =2048;//3000.0; //us  
+double rf90Bandwidth = 5860;//2000.0;               
+double rf90Scale=11.8;      
+double rf180Scale=2.8;  
+int gradWavePoint = 500;     
+double gradStepLength_up = 757;
+double gradStepLength_down = -757;        
+double gradSamplePeriod = 1.0;//us                
+double rxGain = 0.0;//db                  
+double tx_freq_offset_data = 0.0;//KHZ    
+double tx_ph_offset_data = 0.0;//degree                      
+double preDiscard = 5.0;
+double preDiscardPilot = 5.0;
+double thickSliceRatioGain = 1;//1.32;// 层后修正因子
+double gradMatrixSel = 2;
+double gradMatrixPilot = 3;
+double sepeceSliceTime = 40000.0; // 多层扫描时，每层扫描时间间隔。取值范围为：TR/noSlices > sepeceSliceTime > TE * noEchos 
+double gradmaxPhase = 1.0;
+double ratiaFreqOversampling = 1.0;
+double tcrushIn = 0.0;
+double Delay_test = 0;
+double UnifiedTDelay = 50;
+double gp_on = 1;
+
+double grad_spoil_on = 1.0;
+double gradSpoilAmp = 300.0;
+double crushTime = 1500;//3000.0;
+
+double PhaseTime = 1500;
+double ReadComp = 1500;
+double SliceComp = 1500;
+double SPhase_Time = 1500;
+double Sphase_MaxGain = 117.1875;//234.375;//117.1875;//234.375;//100;
+//double gsp_on = 1;
+double pilot_on =1;
+
+double pilot_next = 0;
+
+             
+void main()
+{   
+    double total_scans ;
+  //  double gsp_on = 0;
+    double MainctrlTrigger_scan_cnt = 0.0;
+    double MainctrlTrigger_Ave_cnt = 0.0;
+    double flag =1;
+   // MainctrlTrigger( noAverages, total_scans, TR);
+   main_ctrl_start:
+    MainctrlTrigger_Ave_cnt = 0.0;
+    noAverages_loop: 
+    
+    if(pilot_on == 0){
+    	if(flag==1){
+    		MainctrlTrigger_scan_cnt = 0;
+    		flag =0;
+    	}
+      total_scans= noScans*noViewsSec;
+    } 
+    GenerateTrigger();
+    TimerCmp(TR,MS); 
+	  MainctrlTrigger_Ave_cnt = MainctrlTrigger_Ave_cnt + 1.0;    
+    if(MainctrlTrigger_Ave_cnt < noAverages)
+    goto noAverages_loop;
+    
+    
+    MainctrlTrigger_scan_cnt = MainctrlTrigger_scan_cnt + 1.0;    
+    if(pilot_on == 0){     
+     if(MainctrlTrigger_scan_cnt < total_scans ) //noScans
+     goto main_ctrl_start;
+    }else{
+    	if(MainctrlTrigger_scan_cnt == noScansPilot){
+    		L1:
+    			update;
+    			delay(1000,US);
+    			if(pilot_next==0)
+    				goto L1;
+    	}
+    	if(pilot_next ==1){
+    		MainctrlTrigger_scan_cnt =0;
+    		pilot_next=0;
+    	}
+      if(MainctrlTrigger_scan_cnt >=0 )
+      goto main_ctrl_start;
+    }
+    Lend:
+    end;
+
+/*-----------------------------------------------------   
+ 选层梯度模块，ge序列需要在90度射频脉冲上施加
+ 选层和重聚相梯度。                     
+------------------------------------------------------*/  
+
+    gradS:
+    {
+
+      double trampTime;
+      double fixDelayTime;
+      double holdTime1;
+      double holdTime2;
+      double holdTime3;
+      double holdTime4;
+      double delayTime1;
+      double delayTime2;
+      double delayTimeSpoil;
+      double rep_cnt = 0.0;
+      double rep_cnt1;
+      double gradGain1;
+      double gradGain2;
+      double gradGain3;
+      double tcrush;      
+      double AR1;
+      double noAfterEffSample;
+      double afterTacq;
+      static double echoBlockCnt = 0.0;
+      static double slicegrad = 1.0;
+      double slicegradgain;
+
+      double step;
+      double slicegain;
+   //   double gsp_on =0;
+      double noSamples_tmp;
+      double preDiscard_tmp;           
+      
+      trampTime = gradWavePoint ;
+      fixDelayTime = UnifiedTDelay + Delay_test;
+      step = 2.0*slicegrad/noViewsSec;
+      
+      
+      averages_loop:  
+      	                                                               
+        rep_cnt = 0.0;                                                                            //多层扫描循环计数器
+        WaitTrigger();  
+        if(pilot_on == 0){
+          noSamples_tmp = noSamples;
+          preDiscard_tmp = preDiscard;
+        }
+        else{
+          noSamples_tmp = noSamplesPilot;
+          preDiscard_tmp = preDiscardPilot;
+        }      
+        noAfterEffSample = (noSamples_tmp + partialFreqSampling)*0.5 + preDiscard_tmp;
+        afterTacq = AcquireDuration(samplePeriod,noAfterEffSample);                                               
+      	if(pilot_on==0) 
+      	{                                                                          
+          GradMatSel(gradMatrixSel);
+          gradGain1 = rf90Bandwidth/(thickSlice*thickSliceRatioGain);
+        }    
+        else
+        {
+        	GradMatSel(gradMatrixPilot );    //选择旋转矩阵  gradMatrix_2D
+        	gradGain1 = rf90Bandwidth/( thickSlicePilot*thickSliceRatioGain);//计算选层梯度增益  thickSlice_2D
+        }                                                            
+                                       
+        tcrush = TcrushGenerate( tcrushIn, gradGain1, thickSlice, thickSliceRatioGain, trampTime);//计算crush时间
+        AR1 = 0.5*gradGain1*(tsel90+trampTime);                                                   //用以计算重相梯度增益中间变量
+        holdTime1 = tsel90;                                                                       //选层梯度保持时间
+        holdTime2 = 0.0;   
+        holdTime3 = SliceComp;//tsel90*0.5;//PreGardTime( tcrush, tsel90, TE , trampTime);                                 //计算重相梯度保持时间
+        gradGain2 = AR1/(holdTime3+trampTime); 
+        
+        if(echoBlockCnt>noScans)
+     	   echoBlockCnt = 0.0;
+
+        
+        if(echoBlockCnt==0.0)
+        	slicegrad = slicegrad-step;
+         
+        echoBlockCnt =echoBlockCnt+1;
+        if(pilot_on==0)
+          slicegradgain = slicegrad*Sphase_MaxGain;//gradGain1;   
+        else
+          slicegradgain = 0;
+                  
+        slice_loop:                                                                               //多层扫描循环结构
+          delayTime1 = fixDelayTime + sepeceSliceTime*rep_cnt;                                    //计算开始施加选层梯度时间
+          delayTime2 = fixDelayTime + trampTime*4.0 + holdTime1 + holdTime3+ sepeceSliceTime*rep_cnt;
+          delayTimeSpoil = fixDelayTime + tsel90*0.5 + TE + afterTacq + trampTime*2 +sepeceSliceTime*rep_cnt;
+          TimerCmp(delayTime1,US); 
+          GradGainRegStart_2(gradWavePoint,gradStepLength_up,holdTime1,gradGain1);   
+          GradGainRegStart_2(gradWavePoint,gradStepLength_down,holdTime2,gradGain1);   
+          GradGainRegStart_2(gradWavePoint,gradStepLength_down,holdTime3,gradGain2); 
+          GradGainRegStart_2(gradWavePoint,gradStepLength_up,0,gradGain2);                                                                
+  
+         TimerCmp(delayTime2,US);
+         GradGainRegStart_2(gradWavePoint,gradStepLength_up,SPhase_Time,slicegradgain);   
+         GradGainRegStart_2(gradWavePoint,gradStepLength_down,0,slicegradgain);
+         if(pilot_on==0){  
+          if(grad_spoil_on==1.0)
+		       {
+		 	       TimerCmp(delayTimeSpoil ,US);
+		 	       GradGainRegStart_2(gradWavePoint,gradStepLength_down,SPhase_Time,slicegradgain);   
+             GradGainRegStart_2(gradWavePoint,gradStepLength_up,0,slicegradgain); 
+
+		       }
+         }else
+         {
+            TimerCmp(delayTimeSpoil ,US);
+                GradGainRegStart_2(gradWavePoint,gradStepLength_up,crushTime,gradSpoilAmp);
+                GradGainRegStart_2(gradWavePoint,gradStepLength_down,0,gradSpoilAmp);
+         }
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSlices )
+          goto slice_loop; 
+     
+      goto averages_loop;
+    }
+
+/*-----------------------------------------------------   
+ 读出梯度模块，根据ge序列需求计算和配置相关参数，
+ 施加读出梯度。                     
+------------------------------------------------------*/
+       
+    gradR:
+    {       
+      double trampTime;
+      double fixDelayTime;
+      double holdTime1;
+      double holdTime2;
+      double delayTime1;
+      double delayTime2;
+      double delayTimeSpoil;
+      double rep_cnt = 0.0;
+      double gradGain1;
+      double gradGain2;
+      double tcrush;
+      double AR1;
+      double gradGaintmp;
+      double preTacq;
+      double tacq;
+      double totalsample = 0.0;
+      double noPreEffSample ;
+      double read_bandwidth;  
+      double   noAfterEffSample;
+      double  afterTacq;
+   //   double gsp_on =0;
+      double noSamples_tmp;
+      double preDiscard_tmp;
+
+      
+      trampTime = gradWavePoint ;
+      fixDelayTime = UnifiedTDelay +Delay_test;
+           
+      
+      averages_loop: 
+      	                                             //计算读出预聚相梯度增益
+        rep_cnt = 0.0;                                                                     //多层扫描循环计数器       
+        WaitTrigger();                                                                     //等待trigger信号   
+        if(pilot_on == 0){
+          noSamples_tmp = noSamples;
+          preDiscard_tmp = preDiscard;
+        }
+        else{
+          noSamples_tmp = noSamplesPilot;
+          preDiscard_tmp = preDiscardPilot;
+        }
+      
+        noPreEffSample = (noSamples_tmp - partialFreqSampling)*0.5+ preDiscard_tmp;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        noAfterEffSample = (noSamples_tmp + partialFreqSampling)*0.5 + preDiscard_tmp;
+        afterTacq = AcquireDuration(samplePeriod,noAfterEffSample);
+        totalsample = preDiscard_tmp +  noSamples_tmp;
+        tacq = AcquireDuration(samplePeriod,totalsample);  
+        gradGain2 = GardReadGain( samplePeriod, fovRead, ratiaFreqOversampling);//计算读出梯度增益 
+        holdTime2 = tacq;
+        tcrush = preTacq; 
+        holdTime1 = ReadComp;
+        AR1 = (preTacq+trampTime*0.5) * gradGain2;                                                              
+        gradGain1 = AR1/(holdTime1+trampTime);                                                       
+        slice_loop:                                                                        //多层扫描循环结构
+          delayTime1 = fixDelayTime + tsel90*0.5 + TE - preTacq  - holdTime1 - trampTime*2.0+ sepeceSliceTime*rep_cnt; //计算读出梯度施加时间
+          delayTimeSpoil = fixDelayTime + tsel90*0.5 + TE + afterTacq + trampTime*2 +sepeceSliceTime*rep_cnt; 
+          TimerCmp(delayTime1 ,US);  
+          GradGainRegStart_2(gradWavePoint,gradStepLength_down,holdTime1,gradGain1);
+          GradGainRegStart_2(gradWavePoint,gradStepLength_up,0,gradGain1);
+          GradGainRegStart_2(gradWavePoint,gradStepLength_up,holdTime2,gradGain2);
+          GradGainRegStart_2(gradWavePoint,gradStepLength_down,0,gradGain2);                                                   
+          if(grad_spoil_on==1.0)
+		      {
+		 	      TimerCmp(delayTimeSpoil ,US);
+		 	      GradGainRegStart_2(gradWavePoint,gradStepLength_up,crushTime,gradGain2);
+		 	      GradGainRegStart_2(gradWavePoint,gradStepLength_down,0,gradGain2);
+		      }                            
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSlices )
+          goto slice_loop; 
+          
+       goto averages_loop; 
+    }
+
+/*-----------------------------------------------------   
+ 相位编码梯度模块，根据ge序列需求计算和配置相关参数，
+ 施加相位编码梯度。                     
+------------------------------------------------------*/
+
+    gradP:
+    {       
+      double trampTime;
+      double fixDelayTime;
+      double holdTime1;
+      double delayTime1;
+      double delayTime2;
+      double delayTimeSpoil;
+      double rep_cnt = 0.0;
+      double gradGain1;
+      double gradpgain;
+      double tcrush;
+      double gradGaintmp;
+      double afterTacq;
+      double noPreEffSample;
+      double preTacq;
+      double dummyShotEnout;
+      static double echoBlockCnt = 0.0;
+      double effNoViewsHalf;
+      double effectiveNoScans;
+      double noAfterEffSample;
+      double gainEffPhase ;
+ //     double gsp_on=0;
+      double noScans_val;
+      static double AveCnt_pilot=0.0;
+      double noSamples_tmp;
+      double preDiscard_tmp;
+  //    static double scanCnt = 0.0;
+
+      
+      trampTime = gradWavePoint ;
+      fixDelayTime = UnifiedTDelay+Delay_test ;
+      holdTime1 = PhaseTime;
+      
+      
+      averages_loop:
+      	
+        rep_cnt = 0.0;       
+        WaitTrigger(); 
+        if(pilot_on == 0){
+          noSamples_tmp = noSamples;
+          preDiscard_tmp = preDiscard;
+        }
+        else{
+          noSamples_tmp = noSamplesPilot;
+          preDiscard_tmp = preDiscardPilot;
+        }
+
+        noPreEffSample = (noSamples_tmp - partialFreqSampling)*0.5+preDiscard_tmp;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        noAfterEffSample = (noSamples_tmp + partialFreqSampling)*0.5 + preDiscard_tmp;
+        afterTacq = AcquireDuration(samplePeriod,noAfterEffSample);
+        
+        if(pilot_on==0)
+        {
+         effNoViewsHalf=(noScans-dummyShot)*noEchoes*0.5;
+         effectiveNoScans = noScans - dummyShot ;
+         noScans_val = noScans;
+        }
+        else
+        {
+         effNoViewsHalf=(noScansPilot -dummyShot)*noEchoes*0.5;//noScans_2D
+         effectiveNoScans = noScansPilot  - dummyShot ;  //noScans_2D
+         noScans_val = noScansPilot;
+        } 
+        gainEffPhase = GainEffPhase( fovPhase, holdTime1, noScans_val ,  noEchoes,  dummyShot, trampTime);
+        gradpgain = gainEffPhase/gradmaxPhase*gp_on;
+        if(pilot_on==0)
+        {        
+          echoBlockCnt = Grad3DEnScanCnt(noAverages, noScans);
+        }else
+        	{
+        //  echoBlockCnt =GradEnScanCnt( noAverages) ; //扫描次数计数器，ge序列中等于noscans
+         if(echoBlockCnt ==noScansPilot )
+         {
+           echoBlockCnt =0;
+           AveCnt_pilot =0;
+         }
+           
+          if(noAverages>1)
+          {
+           if(AveCnt_pilot==noAverages)
+              AveCnt_pilot = 0;
+            AveCnt_pilot =  AveCnt_pilot+1; 
+            if(AveCnt_pilot == 1)
+             echoBlockCnt =  echoBlockCnt+1;   
+          }else
+           echoBlockCnt =  echoBlockCnt+1;     
+         }                                              
+        slice_loop:
+          delayTime1 = fixDelayTime + tsel90*0.5 + TE - preTacq  - holdTime1 - trampTime*2.0+ sepeceSliceTime*rep_cnt; //计算施加相位梯度的等待时间
+          delayTimeSpoil = fixDelayTime + tsel90*0.5 + TE + afterTacq + trampTime*2 +sepeceSliceTime*rep_cnt;
+          gradGain1 = ModePhaseCodeGain( modePhaseCode, effectiveEcho, effectiveNoScans, noEchoes,\
+                          orderPhaseCode, modePartialPhaseSampling, partialPhaseSampling,\
+                          effNoViewsHalf, echoBlockCnt, 1.0, gradpgain);                                          //计算相位编码梯度增益
+          TimerCmp(delayTime1,US);  
+          GradGainRegStart_2(gradWavePoint,gradStepLength_up,holdTime1,gradGain1);
+          GradGainRegStart_2(gradWavePoint,gradStepLength_down,0,gradGain1);                                                                                   
+          if(grad_spoil_on==1.0)
+		      {
+		       	TimerCmp(delayTimeSpoil ,US);
+		       	GradGainRegStart_2(gradWavePoint,gradStepLength_down,holdTime1,gradGain1);
+            GradGainRegStart_2(gradWavePoint,gradStepLength_up,0,gradGain1);  
+		      }        
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSlices )
+          goto slice_loop; 
+                   
+      goto averages_loop; 
+    }  
+
+/*-----------------------------------------------------   
+ 发射模块，根据ge序列需求计算和配置相关参数，
+ 每个Scan发射一个90度软脉冲。                     
+------------------------------------------------------*/
+ 
+    tx1:
+    {
+      double trampTime;
+      double fixDelayTime;
+      double delayTime_rf90_1; 
+      double delayTime_rf180_c1; 
+      double rep_cnt = 0.0;
+      double ttxgatepost = 10.0;                
+      double ttxgatepre = 10.0; 
+      double noSlice=0.0;     
+      double tx_freq_offset_data_tmp;
+      double gsp_on = 0;
+      TxChannelShapeSel(CHANNEL1,rf_Shape_NO);
+      trampTime = gradWavePoint ;
+      fixDelayTime = UnifiedTDelay + trampTime+Delay_test;
+      
+      tx_start:
+        TxFirReset(); 
+        WaitTrigger();
+        TxAvePhase( modeAverage,noAverages,tx_freq_offset_data, tx_ph_offset_data,KHZ, CHANNEL1);   
+        rep_cnt = 0.0;
+       
+        slice_loop:
+          noSlice = TxSliceCount( orderSlice,  noSlices, rep_cnt);                    //多层扫描时，扫描层数位置标号
+          TxFreqSet( orderSlice, distanceSlice1, seperationSlice,thickSlice,
+                       noSlice, rf90Bandwidth, CHANNEL1,thickSliceRatioGain);             //多层扫描时，计算不同选层发射脉冲的频率
+          delayTime_rf90_1 = fixDelayTime+sepeceSliceTime*rep_cnt;                        //计算开始发射射频脉冲时间
+          TxPhaseOffsetReg(CHANNEL1,0.0);                                                 //设置发射脉冲相偏
+         TxPhaseCycle(CHANNEL1, phaseCycle, noAverages,rep_cnt);
+          TxAttReg(CHANNEL1,rf90Scale);                                                   //设置发射脉冲幅度
+          TimerCmp(delayTime_rf90_1,US);                                                  //等待delayTime_rf90_1时间，开始发射射频脉冲
+          TxStart(CHANNEL1,tsel90,ttxgatepre,ttxgatepost);                                //开始发射射频脉冲，打开射频发射门控，设置提前开启和延后关闭门控时间
+          
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSlices )
+          goto slice_loop; 
+             
+      goto tx_start;
+    }
+
+/*-----------------------------------------------------   
+ 接收模块，根据ge序列需求计算和配置相关参数，
+ 每个Scan采集一个回波信号。                     
+------------------------------------------------------*/
+
+    rx1:
+    {
+      double trampTime;
+      double fixDelayTime;
+      double sample_period;
+      double delayTime_1; 
+      double delayTime_c1; 
+      double rep_cnt = 0.0;
+      double sample_total;
+      double preTacq;
+      double noPreEffSample;
+      double trxgatepre = 10.0;                 
+      double trxgatepost = 10.0; 
+      double gradGain2;
+      double rx_freq_offset_data = 0.0;//KHZ    
+      double rx_ph_offset_data = 0.0;//degree 
+      double noSamples_tmp;
+      double preDiscard_tmp;
+   //   double gsp_on = 0;
+           
+      RxGainReg(CHANNEL1,rxGain);                                                         //设置接收通道1的增益
+      RxGainReg(CHANNEL2,rxGain); 
+      RxGainReg(CHANNEL3,rxGain);                                                         //设置接收通道1的增益
+      RxGainReg(CHANNEL4,rxGain);
+      RxGainReg(CHANNEL5,rxGain);                                                         //设置接收通道1的增益
+      RxGainReg(CHANNEL6,rxGain);
+      RxGainReg(CHANNEL7,rxGain);                                                         //设置接收通道1的增益
+      RxGainReg(CHANNEL8,rxGain);
+      
+      trampTime = gradWavePoint ;
+      fixDelayTime = TX_FILTER_DELAY-trxgatepre+UnifiedTDelay+trampTime+Delay_test;
+
+      rx_start:
+      	
+        gradGain2 = GardReadGain( samplePeriod, fovRead, ratiaFreqOversampling);
+        rx_freq_offset_data = fovReadOffset*gradGain2*0.001;
+        RxFreqOffsetReg(CHANNEL1,rx_freq_offset_data,KHZ);                                  //设置接收通道1的频偏
+        RxFreqOffsetReg(CHANNEL2,rx_freq_offset_data,KHZ);                                             
+        RxFreqOffsetReg(CHANNEL3,rx_freq_offset_data,KHZ);                                  //设置接收通道1的频偏
+        RxFreqOffsetReg(CHANNEL4,rx_freq_offset_data,KHZ);       
+        RxFreqOffsetReg(CHANNEL5,rx_freq_offset_data,KHZ);                                  //设置接收通道1的频偏
+        RxFreqOffsetReg(CHANNEL6,rx_freq_offset_data,KHZ);       
+        RxFreqOffsetReg(CHANNEL7,rx_freq_offset_data,KHZ);                                  //设置接收通道1的频偏
+        RxFreqOffsetReg(CHANNEL8,rx_freq_offset_data,KHZ); 
+      
+        rx_ph_offset_data =rx_ph_offset_data+(fovPhaseOffset*360/fovPhase);                ////设置接收通道1的相偏 
+        RxPhaseOffsetReg(CHANNEL1,rx_ph_offset_data); 
+        RxPhaseOffsetReg(CHANNEL2,rx_ph_offset_data); 
+        RxPhaseOffsetReg(CHANNEL3,rx_ph_offset_data); 
+        RxPhaseOffsetReg(CHANNEL4,rx_ph_offset_data); 
+        RxPhaseOffsetReg(CHANNEL5,rx_ph_offset_data); 
+        RxPhaseOffsetReg(CHANNEL6,rx_ph_offset_data); 
+        RxPhaseOffsetReg(CHANNEL7,rx_ph_offset_data); 
+        RxPhaseOffsetReg(CHANNEL8,rx_ph_offset_data); 
+        WaitTrigger();
+        if(pilot_on == 0){
+      	  noSamples_tmp = noSamples;
+      	  preDiscard_tmp =preDiscard;
+      	}
+        else{
+      	  noSamples_tmp = noSamplesPilot;
+      	  preDiscard_tmp = preDiscardPilot;
+      	}
+      	
+        sample_total =preDiscard_tmp +  noSamples_tmp;                                              //计算总的采集点数
+        sample_period=RxChannelAcquirePara(samplePeriod,sample_total);                      //计算总的采集时间
+        noPreEffSample = (noSamples_tmp - partialFreqSampling)*0.5 + preDiscard;
+        preTacq = AcquireDuration(samplePeriod,noPreEffSample);
+        rep_cnt = 0.0; 
+        slice_loop:
+          
+          delayTime_c1 = fixDelayTime+TE-preTacq+tsel90*0.5 +sepeceSliceTime*rep_cnt; 
+          
+          if(pilot_on == 1)
+           setr(0x26,1); 
+          else
+           setr(0x26,0);  
+          TimerCmp(delayTime_c1,US);       
+          RxStart(255,trxgatepre,trxgatepost,sample_period);                           //打开接收通道1，开始采集，设置采集门控提前开启和延后关闭时间    
+          rep_cnt = rep_cnt + 1.0;
+            if(rep_cnt < noSlices )
+        goto slice_loop; 
+      
+      goto rx_start;
+    }
+
+}
