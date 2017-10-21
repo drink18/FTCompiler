@@ -12,6 +12,7 @@
                 "environment": [],
                 "externalConsole": true,
                 "MIMode": "gdb",
+                "preLaunchTask": "Build Debug",
                 "miDebuggerPath": "C:/tools/mingw64/bin/gdb.exe",
                 "setupCommands": [
                     {
