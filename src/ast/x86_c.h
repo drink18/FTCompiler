@@ -93,6 +93,8 @@ P X86_C_Prog_new (List_t tds, List_t globals ,List_t funcs);
 Box_t X86_C_Prog_box (P x);
 void X86_C_Prog_print (P x, File_t file);
 
+int find_print_block(B b);
+
 #undef P
 #undef T
 #undef Td

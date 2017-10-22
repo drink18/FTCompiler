@@ -1235,7 +1235,7 @@ static LinkedList_t Parse_waveList()
 
 }
 
-// list record 结构体 或者 数组类型 的名称以及详细信息
+// list record 锟结构锟斤拷 锟斤拷锟斤拷 锟斤拷锟斤拷锟斤拷锟斤拷 锟斤拷锟斤拷锟斤拷锟皆硷拷锟斤拷细锟斤拷息
 static LinkedList_t Parse_typeDefinitionList ()
 {
   Token_t s;

@@ -1,7 +1,9 @@
 #include "../lib/mem.h"
 #include "../lib/int.h"
+#include "../lib/double.h"
 #include "../lib/assert.h"
 #include "../lib/todo.h"
+#include "../lib/string.h"
 
 #include "ast.h"
 
@@ -311,7 +313,7 @@ void Ast_Exp_print (E e)
     print (Int_toString (e->u.intlit));
     return;
   case AST_EXP_DOUBLELIT:
-    print (double_toString (e->u.doublelit));
+    print (Double_toString (e->u.doublelit));
     return;
   case AST_EXP_STRINGLIT:
     print ("\"");

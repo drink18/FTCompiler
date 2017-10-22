@@ -3,6 +3,7 @@
 #include "../lib/assert.h"
 #include "../lib/todo.h"
 #include "../lib/float.h"
+#include <string.h>
 
 #include "x86_c.h"
 
