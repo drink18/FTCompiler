@@ -1,0 +1,220 @@
+#ifndef FIRSTECH_CODE_GEN_H
+#define FIRSTECH_CODE_GEN_H
+
+#include "../lib/linkedList.h"
+#include "../lib/string.h"
+#include "../lib/file.h"
+#include "../lib/internalFunc.h"
+#include "../atoms/atoms.h"
+#include "../machine/machine.h"
+#include "../lib/hash.h"
+#include "x86.h"
+
+
+#define List_t LinkedList_t
+
+#define P X86_Prog_t
+#define Str X86_Str_t
+#define F X86_Fun_t
+#define S X86_Stm_t
+#define O X86_Operand_t
+#define D X86_Dec_t
+#define Stt X86_Struct_t
+#define M X86_Mask_t
+#define R X86_Register_t
+
+#define MAINCTRL_CTRL_RAM_DATA_1  0x114
+#define MAINCTRL_CTRL_RAM_DATA_2  0x116
+#define MAINCTRL_CTRL_RAM_DATA_3  0x118
+#define MAINCTRL_CTRL_RAM_DATA_4  0x11A
+#define MAINCTRL_CTRL_RAM_ADDR	  0x11C
+
+#define MAINCTRL_SEQ_CONFIG1 0x102
+#define MAINCTRL_SEQ_CONFIG2 0x104
+#define MAINCTRL_SEQ_CONFIG3 0x106
+
+
+#define TX1_SEQ_CONFIG1 0x620
+#define TX1_SEQ_CONFIG2 0x622
+#define TX1_SEQ_CONFIG3 0x624
+
+#define TX1_RAM_DATA_1 	0x636
+#define TX1_RAM_DATA_2 	0x638
+#define TX1_RAM_DATA_3 	0x63A
+#define TX1_RAM_DATA_4 	0x63C
+#define TX1_RAM_ADDR 	0x63E
+
+
+#define RX1_SEQ_CONFIG1 0x2022
+#define RX1_SEQ_CONFIG2 0x2024
+#define RX1_SEQ_CONFIG3 0x2026
+
+#define RX1_RAM_DATA_1 	(0x101c*2)
+#define RX1_RAM_DATA_2 	(0x101d*2)
+#define RX1_RAM_DATA_3 	(0x101e*2)
+#define RX1_RAM_DATA_4 	(0x101f*2)
+#define RX1_RAM_ADDR 	(0x1020*2)
+
+
+#define GRADR_SEQ_CONFIG1 0x448
+#define GRADR_SEQ_CONFIG2 0x44A
+#define GRADR_SEQ_CONFIG3 0x44C
+
+#define GRADR_RAM_DATA_1 	0x45C
+#define GRADR_RAM_DATA_2 	0x45E
+#define GRADR_RAM_DATA_3 	0x460
+#define GRADR_RAM_DATA_4 	0x462
+#define GRADR_RAM_ADDR 		0x464
+
+#define GRADP_SEQ_CONFIG1 0x488
+#define GRADP_SEQ_CONFIG2 0x48A
+#define GRADP_SEQ_CONFIG3 0x48C
+
+#define GRADP_RAM_DATA_1 	0x49C
+#define GRADP_RAM_DATA_2 	0x49E
+#define GRADP_RAM_DATA_3 	0x4A0
+#define GRADP_RAM_DATA_4 	0x4A2
+#define GRADP_RAM_ADDR 		0x4A4
+
+#define GRADS_SEQ_CONFIG1 0x228
+#define GRADS_SEQ_CONFIG2 0x22A
+#define GRADS_SEQ_CONFIG3 0x22C
+
+#define GRADS_RAM_DATA_1 	0x23E
+#define GRADS_RAM_DATA_2 	0x240
+#define GRADS_RAM_DATA_3 	0x242
+#define GRADS_RAM_DATA_4 	0x244
+#define GRADS_RAM_ADDR 		0x246
+
+
+
+#define TX1_BRAM_WDATA_I    0x704
+#define TX1_BRAM_WDATA_H	0x706
+#define TX1_BRAM_WR_SEL     0x702
+
+#define GRAD_RAM_ADDR1		0x216
+#define GRAD_RAM_ADDR2		0x218
+
+#define GRAD_PRAM_ADDR1     0x21A
+#define GRAD_PRAM_ADDR2		0x21C
+#define GRAD_PRAM_ADDR3		0x21E
+#define GRAD_PRAM_ADDR4		0x220
+
+#define MAIN_CTRL_CONTROL_REG (0x84*2)
+
+
+#define GRADIENT_CONTROL_REG (0x117*2)
+#define GRADIENT_SEQ_CLR_REG (0x113*2)
+
+#define TX1_CONTROL_REG       (0x313*2)
+
+#define TX2_CONTROL_REG       (0x593*2)
+
+#define RX1_CONTROL_REG       (0x1014*2)
+
+#define RX2_CONTROL_REG       (0x1214*2)
+
+#define RX3_CONTROL_REG       (0x1414*2)
+
+#define RX4_CONTROL_REG       (0x1614*2)
+
+
+
+#define init_alloc_size 1024
+#define init_ram_addr (2048+31) /*32 is predefined global var */
+//4095-32 =4063
+#define INIT_EBP_ADDR  0x40afbe0000000000LL
+#define INIT_ESP_ADDR  0x40afbe0000000000LL
+
+#define MAX_INST_NUM   4096
+#define MAX_RAM_SIZE   (2048-80)
+
+typedef enum
+{
+	GLOBAL_VAR_SYM,
+	FUNC_SYM,
+	LABEL_SYM,
+	CONST_VALUE
+
+}sym_kind;
+typedef enum
+{
+	GLOBAL_VAR_INT,
+	GLOBAL_VAR_FLOAT,
+	GLOBAL_VAR_DOUBLE,
+	CONST_VAR
+}ram_kind;
+
+
+
+typedef struct relocation_sym
+{
+    sym_kind kind;
+    int addr;
+}relocation_sym;
+/*ram data*/
+typedef struct ram_data
+{
+  String_t ram_name;
+  ram_kind ram_type;
+  int ram_val_addr;
+  long long int init_value;
+}ram_data;
+typedef struct reloc_table
+{
+   //in our case one instr 6byte;
+   //line starts from 1
+   int instr_line;
+   //need reloc stm
+   S  stm;
+}reloc_table;
+typedef struct Section
+{
+int instr_total;//instr total
+Hash_t hash_table;/*table for sym*/
+List_t ram_init_data;/*initial ram */
+unsigned char *data;       /* section text data */
+unsigned long data_allocated; /* used for realloc() handling */
+List_t reloc;  //need reloc
+String_t name;  //indicate board name
+
+}Section;
+typedef struct Sections
+{
+  /*section list*/
+  List_t sec_list;
+  /*prog search_list for fast search
+   * list except the internal fun
+  */
+}Sections;
+typedef enum{
+  EIP=4088,
+  EEX,  //used for temp
+  EDX,
+  ECX,
+  EBX,
+  EAX,
+  ESP,
+  EBP
+} FR;
+
+void Firstech_Code_gen (P x, String_t outfilename,int type);
+
+void gen_le48(long long int c);
+void gen_le24(int c);
+
+
+
+
+
+#undef P
+#undef Str
+#undef F
+#undef S
+#undef O
+#undef M
+#undef D
+#undef Stt
+#undef List_t
+
+#endif
