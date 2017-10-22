@@ -1,0 +1,1 @@
+int Lib_test ();
