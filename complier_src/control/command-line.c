@@ -74,6 +74,15 @@ static struct Arg_t Arg_undefineS =
    "undefine 'sym'",
    pre_undefine_symbol};
 
+static struct Arg_t Arg_AddIncludeS=
+{
+    EXPERT_NORMAL,
+    "I",
+    "whatever",
+    "add include path",
+    add_include_path
+};
+
 static void pre_define_symbol()
 {
    CommandLine_next ();
@@ -88,6 +97,19 @@ static void pre_undefine_symbol()
 {
    CommandLine_next ();
    tcc_undefine_symbol(s,currentStr);
+}
+
+static void add_include_path()
+{
+    const char* path = currentArg + 1;
+    if(*path == 0) //end of string , no path added
+    {
+        //potentially a warning here
+    }
+    else
+    {
+        tcc_add_include_path(s, path);
+    }
 }
 
 
@@ -243,6 +265,7 @@ static void Arg_init ()
   cookArg (Arg_o);
   cookArg (Arg_showType);
   cookArg (Arg_trace);
+  cookArg(Arg_AddIncludeS);
   
   return;
 }
@@ -301,15 +324,17 @@ static void error (ErrorKind_t ek)
   exit (1);
 }
 
-static int Arg_searchAndSet (char *s)
+static int Arg_searchAndSet (char *inputArg)
 {
   LinkedList_t args = LinkedList_getFirst (allArgs);
   Arg_t a;
+  char arg[2];
+    arg[0]= inputArg[0];arg[1] = 0;
   
   while (args){
     a = (Arg_t)args->data;
-    if (String_equals (a->name, s)){
-      currentArg = a->arg;
+    if (String_equals (a->name, arg)){
+      currentArg = inputArg;
       a->action ();
       return 1;
     }
