@@ -6,7 +6,7 @@
         {
             "taskName": "Build Debug",
             "type": "shell",
-            "command": "cd buildDebug ; cmake ../complier_src -DCMAKE_BUILD_TYPE=Debug -G 'MinGW Makefiles' ; cmake --build .",
+            "command": "cd buildDebug ; cmake ../src -DCMAKE_BUILD_TYPE=Debug -G 'MinGW Makefiles' ; cmake --build .",
             "problemMatcher": 
             {
                 "owner": "cpp",
@@ -29,7 +29,7 @@
         {
             "taskName": "Build Release",
             "type": "shell",
-            "command": "cd buildRelease ; cmake ../complier_src -G 'MinGW Makefiles' ; cmake --build .",
+            "command": "cd buildRelease ; cmake ../src -G 'MinGW Makefiles' ; cmake --build .",
             "problemMatcher": [
                "$gcc" 
             ],
